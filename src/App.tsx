@@ -11,7 +11,7 @@ function App() {
     <BrowserRouter basename="/lifeos-mission-control/">
       <div className="flex min-h-screen bg-gray-950">
         <Sidebar />
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto pt-14 md:pt-0">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/bob" element={<BobPipeline />} />
