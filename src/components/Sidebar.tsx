@@ -5,7 +5,7 @@ const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/bob', label: 'Bob Pipeline', icon: Wrench },
   { to: '/geoff', label: 'GEOFF Trading', icon: TrendingUp },
-  { to: '/xena', label: 'Xena Signals', icon: Target },
+  { to: '/xena', label: 'Xena Hub', icon: Target },
   { to: '/tasks', label: 'Tasks', icon: CheckSquare },
 ]
 

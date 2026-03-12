@@ -14,6 +14,7 @@ export interface HarnessTask {
 export interface XenaAlphaSignal {
   id: string
   token_symbol: string
+  token_mint: string | null
   signal_strength: string
   signal_type: string | null
   source_account: string | null
@@ -21,8 +22,11 @@ export interface XenaAlphaSignal {
   caller_win_rate: number | null
   on_chain_confirmed: boolean | null
   geoff_reviewed: boolean | null
+  geoff_action: string | null
+  notes: string | null
   created_at: string
   score: number | null
+  score_reasons: string[] | null
 }
 
 export interface GeoffPosition {
@@ -35,6 +39,19 @@ export interface GeoffPosition {
   pnl?: number
   status?: string
   created_at: string
+}
+
+export interface GeoffPMTrade {
+  id: string
+  market_title?: string
+  market_id?: string
+  side?: string
+  contracts?: number
+  avg_price?: number
+  pnl?: number
+  status?: string
+  created_at: string
+  closed_at?: string
 }
 
 export interface Trade {
@@ -68,26 +85,102 @@ export interface Customer {
   name: string
   email: string | null
   phone: string | null
+  address: string | null
   created_at: string
+  updated_at: string
 }
 
 export interface Estimate {
   id: string
   customer_name: string
+  customer_email: string | null
   project_category: string | null
+  project_details: string | null
+  project_address: string | null
+  project_city: string | null
+  project_state: string | null
   subtotal: number | null
   total: number | null
+  tax_amount: number | null
   status: string
+  start_date: string | null
+  estimated_completion_date: string | null
+  notes: string | null
   created_at: string
+  updated_at: string
   is_archived: boolean | null
+  contract_signed: boolean | null
+  contract_signed_date: string | null
+  sent_to_client_at: string | null
+  client_viewed_at: string | null
+  client_response: string | null
+  client_token: string | null
 }
 
-export interface BobSession {
+export interface CustomerFile {
   id: string
-  chat_id: string
-  messages: Record<string, unknown>[] | null
-  lead_data: Record<string, unknown> | null
-  updated_at: string
+  customer_id: string
+  file_name: string
+  file_path: string
+  file_url: string
+  file_type: string | null
+  file_size: number | null
+  category: string | null
+  description: string | null
+  created_at: string
+}
+
+export interface ClientProject {
+  id: string
+  customer_id: string | null
+  project_name: string
+  project_type: string | null
+  status: string
+  start_date: string | null
+  end_date: string | null
+  estimated_cost: number | null
+  actual_cost: number | null
+  description: string | null
+  address: string | null
+  contract_value: number | null
+  current_phase: string | null
+  is_archived: boolean | null
+  created_at: string
+}
+
+export interface XenaContent {
+  id: string
+  title: string | null
+  content: string
+  platform: string | null
+  status: string
+  scheduled_at: string | null
+  published_at: string | null
+  pillar_id: string | null
+  pillar_name: string | null
+  hashtags: string[] | null
+  media_urls: string[] | null
+  performance: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface XenaPillar {
+  id: string
+  pillar_name: string
+  description: string | null
+  posting_frequency: string | null
+  best_days: string[] | null
+  best_hours: number[] | null
+  is_active: boolean
+}
+
+export interface XenaTrend {
+  id: string
+  topic: string
+  platform: string | null
+  score: number | null
+  volume: number | null
+  created_at: string
 }
 
 export interface Agent {
