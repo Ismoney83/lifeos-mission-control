@@ -8,22 +8,22 @@ import type {
 
 const t = (n: number) => n as UTCTimestamp
 import { Settings, Wifi, WifiOff, RefreshCw, Eye, EyeOff, X } from 'lucide-react'
-import {
-  MassiveWebSocket, MassiveREST, calcOBV, calcStochastic, calcVWAP,
-} from '../lib/massive'
+import { MassiveREST, calcOBV, calcStochastic, calcVWAP } from '../lib/massive'
 import type { Candle, IndicatorValue, MACDValue } from '../lib/massive'
+import { BinanceWebSocket, BinanceREST } from '../lib/binance'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export type Timeframe = '30s' | '1m' | '5m' | '15m' | '1h'
 export type CryptoSymbol = 'X:SOLUSD' | 'X:BTCUSD' | 'X:ETHUSD'
 
-const TIMEFRAME_CONFIG: Record<Timeframe, { bufferSize: number; multiplier: number; timespan: string; restTimespan: string }> = {
-  '30s': { bufferSize: 30,   multiplier: 30, timespan: 'second', restTimespan: 'second' },
-  '1m':  { bufferSize: 60,   multiplier: 1,  timespan: 'minute', restTimespan: 'minute' },
-  '5m':  { bufferSize: 300,  multiplier: 5,  timespan: 'minute', restTimespan: 'minute' },
-  '15m': { bufferSize: 900,  multiplier: 15, timespan: 'minute', restTimespan: 'minute' },
-  '1h':  { bufferSize: 3600, multiplier: 1,  timespan: 'hour',   restTimespan: 'hour'   },
+// Binance interval for historical seed + WS buffer size per timeframe
+const TIMEFRAME_CONFIG: Record<Timeframe, { bufferSize: number; binanceInterval: string; massiveTimespan: string }> = {
+  '30s': { bufferSize: 30,   binanceInterval: '1m',  massiveTimespan: 'minute' },
+  '1m':  { bufferSize: 60,   binanceInterval: '1m',  massiveTimespan: 'minute' },
+  '5m':  { bufferSize: 300,  binanceInterval: '5m',  massiveTimespan: 'minute' },
+  '15m': { bufferSize: 900,  binanceInterval: '15m', massiveTimespan: 'minute' },
+  '1h':  { bufferSize: 3600, binanceInterval: '1h',  massiveTimespan: 'hour'   },
 }
 
 const SYMBOLS: { label: string; value: CryptoSymbol }[] = [
@@ -173,7 +173,7 @@ function SettingsModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="text-white font-semibold text-lg">Massive.com API Settings</h3>
+          <h3 className="text-white font-semibold text-lg">Chart Settings</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
             <X className="w-5 h-5" />
           </button>
@@ -181,13 +181,16 @@ function SettingsModal({
 
         <div className="space-y-4">
           <div>
-            <label className="block text-gray-400 text-sm mb-2">API Key</label>
+            <label className="block text-gray-400 text-sm mb-2">
+              Massive.com API Key
+              <span className="ml-2 text-gray-600 font-normal">(optional — for RSI/EMA/MACD overlays)</span>
+            </label>
             <div className="relative">
               <input
                 type={show ? 'text' : 'password'}
                 value={apiKey}
                 onChange={e => onChange(e.target.value)}
-                placeholder="Enter your Massive.com API key"
+                placeholder="Enter Massive.com API key for indicators"
                 className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 pr-12 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-emerald-500"
               />
               <button
@@ -198,7 +201,7 @@ function SettingsModal({
               </button>
             </div>
             <p className="text-gray-600 text-xs mt-1.5">
-              Stored in memory only. Not persisted to disk.
+              Live price + candles stream from Binance (free, no key needed). Massive key adds RSI/EMA/MACD.
             </p>
           </div>
 
@@ -220,10 +223,9 @@ function SettingsModal({
 
           <button
             onClick={() => { onConnect(); onClose() }}
-            disabled={!apiKey.trim()}
-            className="w-full py-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full py-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl font-medium hover:bg-emerald-500/20 transition-colors"
           >
-            {wsStatus === 'connected' ? 'Reconnect' : 'Connect to Massive.com'}
+            {wsStatus === 'connected' ? '↺ Reconnect Binance Stream' : 'Connect Binance Stream'}
           </button>
         </div>
       </div>
@@ -294,8 +296,9 @@ export function GeoffChart() {
   const ema21DataRef = useRef<IndicatorValue[]>([])
   const macdDataRef = useRef<MACDValue[]>([])
   const fibLinesRef = useRef<IPriceLine[]>([])
-  const wsRef = useRef<MassiveWebSocket | null>(null)
-  const restRef = useRef<MassiveREST | null>(null)
+  const wsRef = useRef<BinanceWebSocket | null>(null)
+  const massiveRef = useRef<MassiveREST | null>(null)
+  const binanceRestRef = useRef<BinanceREST | null>(null)
 
   // Track current symbol for WS callbacks (avoid stale closure)
   const symbolRef = useRef(symbol)
@@ -533,28 +536,42 @@ export function GeoffChart() {
   // ─── Load historical data ────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
-    if (!apiKey || !restRef.current) return
+    if (!binanceRestRef.current) return
     setLoading(true)
     setError(null)
+    setDataNote(null)
 
     try {
-      const rest = restRef.current
+      const binance = binanceRestRef.current
       const tf = TIMEFRAME_CONFIG[timeframe]
       const sym = symbol
 
-      const [histResult, rsiData, ema9Data, ema21Data, ema50Data, macdData] = await Promise.all([
-        rest.getHistorical(sym, tf.multiplier, tf.timespan),
-        rest.getRSI(sym, tf.restTimespan, 14),
-        rest.getEMA(sym, 9, tf.restTimespan),
-        rest.getEMA(sym, 21, tf.restTimespan),
-        rest.getEMA(sym, 50, tf.restTimespan),
-        rest.getMACD(sym, tf.restTimespan),
-      ])
+      // Historical candles from Binance (free, real-time)
+      const candles = await binance.getKlines(sym, tf.binanceInterval, 500)
 
-      const { candles, delayed, fallback } = histResult
-      if (fallback) setDataNote('30s bars require a paid Massive plan — showing 1m bars as seed. Live 30s data streams via WebSocket.')
-      else if (delayed) setDataNote('Data is delayed (free plan). WebSocket stream is real-time.')
-      else setDataNote(null)
+      // Indicators from Massive REST (requires API key)
+      let rsiData: IndicatorValue[] = []
+      let ema9Data: IndicatorValue[] = []
+      let ema21Data: IndicatorValue[] = []
+      let ema50Data: IndicatorValue[] = []
+      let macdData: MACDValue[] = []
+
+      if (apiKey && massiveRef.current) {
+        const massive = massiveRef.current
+        try {
+          ;[rsiData, ema9Data, ema21Data, ema50Data, macdData] = await Promise.all([
+            massive.getRSI(sym, tf.massiveTimespan, 14),
+            massive.getEMA(sym, 9, tf.massiveTimespan),
+            massive.getEMA(sym, 21, tf.massiveTimespan),
+            massive.getEMA(sym, 50, tf.massiveTimespan),
+            massive.getMACD(sym, tf.massiveTimespan),
+          ])
+        } catch {
+          setDataNote('Massive indicators unavailable — chart showing price/volume only')
+        }
+      } else {
+        setDataNote('Enter Massive API key for RSI/EMA/MACD overlays. Chart loads live from Binance.')
+      }
 
       candlesRef.current = candles
       rsiDataRef.current = rsiData
@@ -570,36 +587,37 @@ export function GeoffChart() {
     }
   }, [apiKey, symbol, timeframe, renderAllSeries])
 
-  // Reload on symbol/timeframe change
+  // Reload on symbol/timeframe change (Binance data doesn't need API key)
   useEffect(() => {
-    if (apiKey) loadData()
+    loadData()
   }, [symbol, timeframe, loadData])
 
   // ─── WebSocket integration ────────────────────────────────────────────────
 
-  const connectWS = useCallback(() => {
-    if (!apiKey) return
+  // Initialize Binance REST immediately (no auth needed)
+  useEffect(() => {
+    binanceRestRef.current = new BinanceREST()
+  }, [])
 
+  // Initialize Massive REST when API key provided (for indicators only)
+  useEffect(() => {
+    if (apiKey) massiveRef.current = new MassiveREST(apiKey)
+  }, [apiKey])
+
+  const connectWS = useCallback(() => {
     // Cleanup previous WS
     wsRef.current?.destroy()
     wsRef.current = null
     setWsStatus('connecting')
 
-    const rest = new MassiveREST(apiKey)
-    restRef.current = rest
-
-    const ws = new MassiveWebSocket(apiKey)
+    const ws = new BinanceWebSocket()
     ws.bufferSize = TIMEFRAME_CONFIG[timeframe].bufferSize
     wsRef.current = ws
 
+    // Binance connects instantly — no auth needed
     ws.on('auth_success', () => {
       setWsStatus('connected')
       setError(null)
-    })
-
-    ws.on('auth_failed', () => {
-      setWsStatus('disconnected')
-      setError('Massive.com auth failed — check your API key')
     })
 
     // Live price ticks for all symbols
@@ -614,16 +632,14 @@ export function GeoffChart() {
         const candle = event as unknown as Candle
         if (sym !== symbolRef.current) return
 
-        // Append to candles array
         const candles = candlesRef.current
         if (candles.length > 0 && candles[candles.length - 1].time === candle.time) {
-          candles[candles.length - 1] = candle // update current bar
+          candles[candles.length - 1] = candle
         } else {
           candles.push(candle)
-          if (candles.length > 2000) candles.shift() // keep memory bounded
+          if (candles.length > 2000) candles.shift()
         }
 
-        // Update series
         series.current.candle?.update({ ...candle, time: t(candle.time) })
         if (series.current.volume) {
           series.current.volume.update({
@@ -633,21 +649,18 @@ export function GeoffChart() {
           })
         }
 
-        // Update VWAP
         const vwapData = calcVWAP(candlesRef.current)
         if (series.current.vwap && vwapData.length > 0) {
           const vLast = vwapData[vwapData.length - 1]
           series.current.vwap.update({ time: t(vLast.time), value: vLast.value })
         }
 
-        // Update OBV
         const obvData = calcOBV(candlesRef.current)
         if (series.current.obv && obvData.length > 0) {
           const oLast = obvData[obvData.length - 1]
           series.current.obv.update({ time: t(oLast.time), value: oLast.value, color: oLast.color })
         }
 
-        // Update Stochastic
         const stoch = calcStochastic(candlesRef.current)
         if (stoch.length > 0) {
           const last = stoch[stoch.length - 1]
@@ -655,21 +668,13 @@ export function GeoffChart() {
           series.current.stochD?.update({ time: t(last.time), value: last.d })
         }
 
-        // Update confluence
         const vwap = calcVWAP(candlesRef.current)
-        const conf = calcConfluence(
-          candlesRef.current,
-          rsiDataRef.current,
-          ema9DataRef.current,
-          ema21DataRef.current,
-          vwap,
-        )
+        const conf = calcConfluence(candlesRef.current, rsiDataRef.current, ema9DataRef.current, ema21DataRef.current, vwap)
         setConfluence(conf)
         setLivePrices(prev => ({ ...prev, [sym]: candle.close }))
       })
     })
 
-    // Bid/ask quotes for SOL
     ws.on('quote_X:SOLUSD', (event) => {
       const q = event as { bp: number; ap: number }
       setBid(q.bp || 0)
@@ -677,15 +682,15 @@ export function GeoffChart() {
     })
 
     ws.connect()
-    loadData()
-  }, [apiKey, timeframe, loadData])
+  }, [timeframe])
 
-  // Cleanup WS on unmount
+  // Auto-connect Binance WS on mount
   useEffect(() => {
+    connectWS()
     return () => {
       wsRef.current?.destroy()
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update WS buffer size when timeframe changes
   useEffect(() => {
@@ -830,21 +835,7 @@ export function GeoffChart() {
         </button>
       </div>
 
-      {/* ── No API Key state ── */}
-      {!apiKey && (
-        <div className="flex flex-col items-center justify-center h-64 gap-4">
-          <div className="text-center">
-            <p className="text-gray-400 font-medium">Connect to Massive.com</p>
-            <p className="text-gray-600 text-sm mt-1">Enter your API key to enable live chart data</p>
-          </div>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl font-medium hover:bg-emerald-500/20 transition-colors"
-          >
-            <Settings className="w-4 h-4" /> Configure API Key
-          </button>
-        </div>
-      )}
+      {/* Chart always renders — no gate on API key */}
 
       {/* ── Data note banner ── */}
       {dataNote && !error && (
