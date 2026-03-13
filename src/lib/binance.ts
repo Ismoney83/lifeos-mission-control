@@ -1,20 +1,21 @@
-// Binance free public WebSocket + REST for live crypto market data
-// No API key required for public market data streams
+// Binance.US public WebSocket + REST for live crypto market data
+// Uses binance.us (CORS-enabled, US-accessible, no auth for public data)
 
 import type { Candle } from './massive'
 
 // ─── Symbol mapping ────────────────────────────────────────────────────────────
 
+// Binance.US uses USD pairs (SOLUSD, not SOLUSDT)
 export const MASSIVE_TO_BINANCE: Record<string, string> = {
-  'X:SOLUSD': 'SOLUSDT',
-  'X:BTCUSD': 'BTCUSDT',
-  'X:ETHUSD': 'ETHUSDT',
+  'X:SOLUSD': 'SOLUSD',
+  'X:BTCUSD': 'BTCUSD',
+  'X:ETHUSD': 'ETHUSD',
 }
 
 export const BINANCE_TO_MASSIVE: Record<string, string> = {
-  'SOLUSDT': 'X:SOLUSD',
-  'BTCUSDT': 'X:BTCUSD',
-  'ETHUSDT': 'X:ETHUSD',
+  'SOLUSD': 'X:SOLUSD',
+  'BTCUSD': 'X:BTCUSD',
+  'ETHUSD': 'X:ETHUSD',
 }
 
 export type WSCallback = (event: Record<string, unknown>) => void
@@ -22,7 +23,7 @@ export type WSCallback = (event: Record<string, unknown>) => void
 // ─── Binance REST ──────────────────────────────────────────────────────────────
 
 export class BinanceREST {
-  private base = 'https://api.binance.com'
+  private base = 'https://api.binance.us'
 
   // Returns historical candles for any interval
   // intervals: '1s','1m','3m','5m','15m','30m','1h','4h','1d'
@@ -74,15 +75,16 @@ export class BinanceWebSocket {
   connect() {
     if (this.destroyed) return
 
-    // Combined stream: 1s klines for SOL/BTC/ETH + SOL book ticker for bid/ask
+    // Binance.US combined stream: 1s klines for SOL/BTC/ETH + SOL book ticker
+    // Uses USD pairs (SOLUSD not SOLUSDT) and binance.us domain (CORS + US accessible)
     const streams = [
-      'solusdt@kline_1s',
-      'btcusdt@kline_1s',
-      'ethusdt@kline_1s',
-      'solusdt@bookTicker',
+      'solusd@kline_1s',
+      'btcusd@kline_1s',
+      'ethusd@kline_1s',
+      'solusd@bookTicker',
     ].join('/')
 
-    this.ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`)
+    this.ws = new WebSocket(`wss://stream.binance.us:9443/stream?streams=${streams}`)
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
