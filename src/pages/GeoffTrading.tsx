@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { lifeos } from '../lib/supabase'
 import type { GeoffPosition, XenaAlphaSignal, Trade, GeoffPMTrade } from '../types'
 import { StatCard } from '../components/StatCard'
+import { GeoffChart } from '../components/GeoffChart'
 import {
   TrendingUp, Activity, BarChart2, Zap, CheckCircle, XCircle,
   Terminal, Send, ExternalLink, RefreshCw, AlertTriangle,
@@ -11,7 +12,7 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart
 } from 'recharts'
 
-type Tab = 'overview' | 'positions' | 'signals' | 'history' | 'control'
+type Tab = 'chart' | 'overview' | 'positions' | 'signals' | 'history' | 'control'
 
 function signalBadge(strength: string) {
   switch (strength?.toUpperCase()) {
@@ -47,7 +48,7 @@ const QUICK_COMMANDS = [
 ]
 
 export function GeoffTrading() {
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTab] = useState<Tab>('chart')
   const [positions, setPositions] = useState<GeoffPosition[]>([])
   const [signals, setSignals] = useState<XenaAlphaSignal[]>([])
   const [trades, setTrades] = useState<Trade[]>([])
@@ -145,6 +146,7 @@ export function GeoffTrading() {
   }, [])
 
   const tabs: { key: Tab; label: string; badge?: number }[] = [
+    { key: 'chart', label: '📈 Chart' },
     { key: 'overview', label: 'Overview' },
     { key: 'positions', label: 'Positions', badge: positions.length },
     { key: 'signals', label: 'Signals', badge: pendingSignals || undefined },
@@ -218,6 +220,13 @@ export function GeoffTrading() {
           </button>
         ))}
       </div>
+
+      {/* CHART TAB */}
+      {tab === 'chart' && (
+        <div className="-mx-6 -mt-5">
+          <GeoffChart />
+        </div>
+      )}
 
       {/* OVERVIEW TAB */}
       {tab === 'overview' && (
