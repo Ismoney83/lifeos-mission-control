@@ -246,6 +246,7 @@ export function GeoffChart() {
   const [confluence, setConfluence] = useState<ConfluenceResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [dataNote, setDataNote] = useState<string | null>(null)
   const [showFib, setShowFib] = useState(true)
   const [showVolume, setShowVolume] = useState(true)
 
@@ -541,7 +542,7 @@ export function GeoffChart() {
       const tf = TIMEFRAME_CONFIG[timeframe]
       const sym = symbol
 
-      const [candles, rsiData, ema9Data, ema21Data, ema50Data, macdData] = await Promise.all([
+      const [histResult, rsiData, ema9Data, ema21Data, ema50Data, macdData] = await Promise.all([
         rest.getHistorical(sym, tf.multiplier, tf.timespan),
         rest.getRSI(sym, tf.restTimespan, 14),
         rest.getEMA(sym, 9, tf.restTimespan),
@@ -549,6 +550,11 @@ export function GeoffChart() {
         rest.getEMA(sym, 50, tf.restTimespan),
         rest.getMACD(sym, tf.restTimespan),
       ])
+
+      const { candles, delayed, fallback } = histResult
+      if (fallback) setDataNote('30s bars require a paid Massive plan — showing 1m bars as seed. Live 30s data streams via WebSocket.')
+      else if (delayed) setDataNote('Data is delayed (free plan). WebSocket stream is real-time.')
+      else setDataNote(null)
 
       candlesRef.current = candles
       rsiDataRef.current = rsiData
@@ -588,6 +594,12 @@ export function GeoffChart() {
 
     ws.on('auth_success', () => {
       setWsStatus('connected')
+      setError(null)
+    })
+
+    ws.on('auth_failed', () => {
+      setWsStatus('disconnected')
+      setError('Massive.com auth failed — check your API key')
     })
 
     // Live price ticks for all symbols
@@ -831,6 +843,13 @@ export function GeoffChart() {
           >
             <Settings className="w-4 h-4" /> Configure API Key
           </button>
+        </div>
+      )}
+
+      {/* ── Data note banner ── */}
+      {dataNote && !error && (
+        <div className="px-4 py-1.5 bg-yellow-500/8 border-b border-yellow-500/20 text-yellow-500/80 text-xs">
+          ⚠ {dataNote}
         </div>
       )}
 

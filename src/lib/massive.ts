@@ -56,7 +56,7 @@ export class MassiveWebSocket {
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
-      this.ws!.send(JSON.stringify({ action: 'auth', params: this.apiKey }))
+      // Don't send auth here — wait for the server's "connected" status message first
     }
 
     this.ws.onmessage = (msg) => {
@@ -76,24 +76,41 @@ export class MassiveWebSocket {
     this.ws.onerror = (e) => console.error('[Massive WS] error:', e)
   }
 
-  private authenticate() {
+  private sendAuth() {
+    this.ws?.send(JSON.stringify({ action: 'auth', params: this.apiKey }))
+  }
+
+  private sendSubscriptions() {
     this.subscribe([
       'XA.X:SOLUSD', 'XA.X:BTCUSD', 'XA.X:ETHUSD', 'XA.X:XRPUSD',
       'XQ.X:SOLUSD',
     ])
-    if (this.callbacks['auth_success']) {
-      this.callbacks['auth_success']({})
-    }
   }
 
   private handleEvent(event: Record<string, unknown>) {
     const ev = event.ev as string
-    if (ev === 'connected') { this.authenticate(); return }
-    if (ev === 'auth_success') {
-      console.log('[Massive WS] authenticated')
-      if (this.callbacks['auth_success']) this.callbacks['auth_success'](event)
-      return
+    // Polygon.io / Massive.com use ev="status" with a "status" sub-field
+    const status = (event.status as string) ?? ''
+
+    if (ev === 'status' || ev === 'connected') {
+      if (status === 'connected' || ev === 'connected') {
+        console.log('[Massive WS] connected — sending auth')
+        this.sendAuth()
+        return
+      }
+      if (status === 'auth_success') {
+        console.log('[Massive WS] authenticated — subscribing')
+        this.sendSubscriptions()
+        if (this.callbacks['auth_success']) this.callbacks['auth_success'](event)
+        return
+      }
+      if (status === 'auth_failed') {
+        console.error('[Massive WS] auth failed — check API key')
+        if (this.callbacks['auth_failed']) this.callbacks['auth_failed'](event)
+        return
+      }
     }
+
     if (ev === 'XA') {
       this.handleSecondAggregate(event as unknown as XAEvent)
     }
@@ -187,18 +204,35 @@ export class MassiveREST {
     timespan: string,
     fromMs?: number,
     toMs?: number
-  ): Promise<Candle[]> {
+  ): Promise<{ candles: Candle[]; delayed: boolean; fallback: boolean }> {
     const from = fromMs ?? Date.now() - 4 * 60 * 60 * 1000
     const to = toMs ?? Date.now()
     const fromDate = new Date(from).toISOString().split('T')[0]
     const toDate = new Date(to).toISOString().split('T')[0]
-    const url = `${this.base}/v2/aggs/ticker/${symbol}/range/${multiplier}/${timespan}/${fromDate}/${toDate}?adjusted=true&sort=asc&limit=10000&apiKey=${this.apiKey}`
-    const res = await fetch(url)
-    const data = await res.json()
-    return (data.results || []).map((b: Record<string, number>) => ({
+
+    const fetch1 = async (mult: number, span: string) => {
+      const url = `${this.base}/v2/aggs/ticker/${symbol}/range/${mult}/${span}/${fromDate}/${toDate}?adjusted=true&sort=asc&limit=10000&apiKey=${this.apiKey}`
+      const res = await fetch(url)
+      return res.json()
+    }
+
+    let data = await fetch1(multiplier, timespan)
+
+    // Sub-minute data requires paid plan — fallback to 1-minute bars
+    if (data.status === 'NOT_AUTHORIZED' && timespan === 'second') {
+      data = await fetch1(1, 'minute')
+      const candles = (data.results || []).map((b: Record<string, number>) => ({
+        time: Math.floor(b.t / 1000),
+        open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v,
+      }))
+      return { candles, delayed: data.status === 'DELAYED', fallback: true }
+    }
+
+    const candles = (data.results || []).map((b: Record<string, number>) => ({
       time: Math.floor(b.t / 1000),
       open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v,
     }))
+    return { candles, delayed: data.status === 'DELAYED', fallback: false }
   }
 
   async getRSI(symbol: string, timespan = 'minute', window = 14): Promise<IndicatorValue[]> {

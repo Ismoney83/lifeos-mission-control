@@ -432,12 +432,24 @@ export function GeoffTrading() {
           {/* Quick Commands */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
             <h3 className="text-white font-semibold mb-1">Quick Commands</h3>
-            <p className="text-gray-500 text-xs mb-4">Fire pre-set commands directly to GEOFF via harness</p>
+            <p className="text-gray-500 text-xs mb-4">One-click — instantly queued to GEOFF via harness</p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {QUICK_COMMANDS.map(qc => (
                 <button
                   key={qc.label}
-                  onClick={() => setCommand(qc.cmd)}
+                  onClick={async () => {
+                    const { error } = await lifeos.from('harness_tasks').insert({
+                      task_id: `GEOFF-CMD-${Date.now()}`,
+                      title: qc.cmd,
+                      description: `Quick command from Mission Control`,
+                      owner_agent: 'geoff',
+                      routed_to: 'geoff',
+                      status: 'pending',
+                      priority: 'high',
+                      source: 'mission_control',
+                    })
+                    setCmdLog(prev => [{ ts: new Date().toLocaleTimeString(), cmd: qc.cmd, ok: !error }, ...prev.slice(0, 9)])
+                  }}
                   className="p-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-emerald-500/40 rounded-xl text-left transition-all group"
                 >
                   <div className="text-white text-xs font-medium group-hover:text-emerald-400 transition-colors">{qc.label}</div>
