@@ -835,8 +835,6 @@ export function GeoffChart() {
         </button>
       </div>
 
-      {/* Chart always renders — no gate on API key */}
-
       {/* ── Data note banner ── */}
       {dataNote && !error && (
         <div className="px-4 py-1.5 bg-yellow-500/8 border-b border-yellow-500/20 text-yellow-500/80 text-xs">
@@ -851,9 +849,8 @@ export function GeoffChart() {
         </div>
       )}
 
-      {/* ── Chart layout ── */}
-      {apiKey && (
-        <div className="flex gap-0">
+      {/* ── Chart layout — always renders, Binance data is free ── */}
+      <div className="flex gap-0">
           {/* Left: 5 stacked panes */}
           <div className="flex-1 min-w-0">
             {/* Pane labels row */}
