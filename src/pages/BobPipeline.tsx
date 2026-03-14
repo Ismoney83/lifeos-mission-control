@@ -1,24 +1,31 @@
 import { useEffect, useState } from 'react'
 import { ovb } from '../lib/supabase'
-import type { Estimate } from '../types'
+import type { Estimate, Lead } from '../types'
 import { ClientDrawer } from '../components/ClientDrawer'
 import {
   FileText, CheckCircle, Clock,
   ChevronRight, ChevronDown, Search, List, LayoutGrid,
-  Plus, Edit2, Archive, TrendingUp
+  Plus, Edit2, Archive, TrendingUp, Users, PhoneCall
 } from 'lucide-react'
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Shared Types ─────────────────────────────────────────────────────────────
 
-type StatusKey = 'draft' | 'sent' | 'approved' | 'rejected'
+export interface DrawerSelection {
+  id: string
+  type: 'estimate' | 'lead'
+}
+
+// ─── Estimate Helpers ────────────────────────────────────────────────────────
+
+type EstimateStatusKey = 'draft' | 'sent' | 'approved' | 'rejected'
 type ViewMode = 'list' | 'board'
 
-const STATUS_CONFIG: Record<StatusKey, {
+const ESTIMATE_STATUS_CONFIG: Record<EstimateStatusKey, {
   label: string
-  color: string        // left-border / dot
-  pill: string         // pill bg + text
-  border: string       // pill border
-  colHeader: string    // board column header tint
+  color: string
+  pill: string
+  border: string
+  colHeader: string
 }> = {
   draft: {
     label: 'Draft',
@@ -50,11 +57,42 @@ const STATUS_CONFIG: Record<StatusKey, {
   },
 }
 
-const STATUSES: StatusKey[] = ['draft', 'sent', 'approved', 'rejected']
+const ESTIMATE_STATUSES: EstimateStatusKey[] = ['draft', 'sent', 'approved', 'rejected']
 
-function getStatusCfg(status: string) {
-  return STATUS_CONFIG[status?.toLowerCase() as StatusKey] ?? STATUS_CONFIG.draft
+function getEstimateStatusCfg(status: string) {
+  return ESTIMATE_STATUS_CONFIG[status?.toLowerCase() as EstimateStatusKey] ?? ESTIMATE_STATUS_CONFIG.draft
 }
+
+// ─── Lead Helpers ─────────────────────────────────────────────────────────────
+
+type LeadStatusKey = 'new' | 'contacted' | 'site_visit_scheduled' | 'estimate_sent' | 'negotiating' | 'converted' | 'lost'
+
+const LEAD_STATUS_CONFIG: Record<LeadStatusKey, { label: string; color: string }> = {
+  new:                   { label: 'New',         color: '#94a3b8' },
+  contacted:             { label: 'Contacted',   color: '#4573D2' },
+  site_visit_scheduled:  { label: 'Site Visit',  color: '#F59E0B' },
+  estimate_sent:         { label: 'Est. Sent',   color: '#A855F7' },
+  negotiating:           { label: 'Negotiating', color: '#06B6D4' },
+  converted:             { label: 'Converted',   color: '#37C68B' },
+  lost:                  { label: 'Lost',        color: '#F06A6A' },
+}
+
+const LEAD_STATUSES: LeadStatusKey[] = ['new', 'contacted', 'site_visit_scheduled', 'estimate_sent', 'negotiating', 'converted', 'lost']
+
+function getLeadStatusCfg(status: string) {
+  return LEAD_STATUS_CONFIG[status?.toLowerCase() as LeadStatusKey] ?? LEAD_STATUS_CONFIG.new
+}
+
+function daysSince(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  return Math.floor(diff / (1000 * 60 * 60 * 24))
+}
+
+function isThisWeek(dateStr: string) {
+  return daysSince(dateStr) <= 7
+}
+
+// ─── Shared Helpers ───────────────────────────────────────────────────────────
 
 function formatDate(dateStr: string | null) {
   if (!dateStr) return '—'
@@ -84,10 +122,8 @@ function MetricCard({ label, value, sub, accentColor, icon }: MetricCardProps) {
       className="rounded-xl p-4 flex items-center gap-4 transition-all duration-150"
       style={{
         background: '#161b27',
-        borderLeft: `3px solid ${accentColor}`,
         border: `1px solid rgba(255,255,255,0.06)`,
-        borderLeftWidth: '3px',
-        borderLeftColor: accentColor,
+        borderLeft: `3px solid ${accentColor}`,
       }}
     >
       <div
@@ -105,34 +141,50 @@ function MetricCard({ label, value, sub, accentColor, icon }: MetricCardProps) {
   )
 }
 
-// ─── Status Pill ─────────────────────────────────────────────────────────────
+// ─── Status Pill (Estimate) ───────────────────────────────────────────────────
 
-function StatusPill({ status }: { status: string }) {
-  const cfg = getStatusCfg(status)
+function EstimateStatusPill({ status }: { status: string }) {
+  const cfg = getEstimateStatusCfg(status)
   return (
     <span
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.pill} ${cfg.border}`}
     >
-      <span
-        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-        style={{ background: cfg.color }}
-      />
+      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: cfg.color }} />
       {cfg.label}
     </span>
   )
 }
 
-// ─── List Row ────────────────────────────────────────────────────────────────
+// ─── Lead Status Pill ────────────────────────────────────────────────────────
 
-interface RowProps {
+function LeadStatusPill({ status }: { status: string }) {
+  const cfg = getLeadStatusCfg(status)
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border"
+      style={{
+        background: `${cfg.color}18`,
+        color: cfg.color,
+        borderColor: `${cfg.color}40`,
+      }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: cfg.color }} />
+      {cfg.label}
+    </span>
+  )
+}
+
+// ─── Estimate List Row ────────────────────────────────────────────────────────
+
+interface EstimateRowProps {
   estimate: Estimate
   isSelected: boolean
   onSelect: () => void
 }
 
-function EstimateRow({ estimate, isSelected, onSelect }: RowProps) {
+function EstimateRow({ estimate, isSelected, onSelect }: EstimateRowProps) {
   const [hovered, setHovered] = useState(false)
-  const cfg = getStatusCfg(estimate.status)
+  const cfg = getEstimateStatusCfg(estimate.status)
   const isApproved = estimate.status?.toLowerCase() === 'approved'
 
   return (
@@ -151,7 +203,6 @@ function EstimateRow({ estimate, isSelected, onSelect }: RowProps) {
         borderBottom: '1px solid rgba(255,255,255,0.04)',
       }}
     >
-      {/* Checkbox circle */}
       <div
         className="w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all duration-150"
         style={{
@@ -166,7 +217,6 @@ function EstimateRow({ estimate, isSelected, onSelect }: RowProps) {
         )}
       </div>
 
-      {/* Client + project */}
       <div className="flex-1 min-w-0">
         <span className="text-[#F8F9FA] font-semibold text-sm">
           {estimate.customer_name}
@@ -183,25 +233,17 @@ function EstimateRow({ estimate, isSelected, onSelect }: RowProps) {
         )}
       </div>
 
-      {/* Right side — always visible */}
       <div className="flex items-center gap-3 flex-shrink-0">
-        <StatusPill status={estimate.status} />
-
+        <EstimateStatusPill status={estimate.status} />
         <span className="text-[#F8F9FA] text-sm font-semibold w-20 text-right">
           {formatMoney(estimate.total)}
         </span>
-
         <span
           className="text-xs px-2 py-0.5 rounded font-medium"
-          style={{
-            background: 'rgba(255,255,255,0.06)',
-            color: '#8B9EB3',
-          }}
+          style={{ background: 'rgba(255,255,255,0.06)', color: '#8B9EB3' }}
         >
           {formatDate(estimate.created_at)}
         </span>
-
-        {/* Hover actions */}
         <div
           className="flex items-center gap-1 transition-all duration-150"
           style={{ opacity: hovered ? 1 : 0 }}
@@ -221,7 +263,6 @@ function EstimateRow({ estimate, isSelected, onSelect }: RowProps) {
             <Archive className="w-3.5 h-3.5 text-[#8B9EB3]" />
           </button>
         </div>
-
         <ChevronRight
           className="w-4 h-4 transition-colors duration-150"
           style={{ color: hovered ? cfg.color : 'rgba(139,158,179,0.4)' }}
@@ -231,25 +272,24 @@ function EstimateRow({ estimate, isSelected, onSelect }: RowProps) {
   )
 }
 
-// ─── Section Group ────────────────────────────────────────────────────────────
+// ─── Estimate Section Group ───────────────────────────────────────────────────
 
-interface SectionProps {
-  status: StatusKey
+interface EstimateSectionProps {
+  status: EstimateStatusKey
   estimates: Estimate[]
   selectedId: string | null
   onSelect: (id: string) => void
   defaultOpen?: boolean
 }
 
-function SectionGroup({ status, estimates, selectedId, onSelect, defaultOpen = true }: SectionProps) {
+function EstimateSectionGroup({ status, estimates, selectedId, onSelect, defaultOpen = true }: EstimateSectionProps) {
   const [open, setOpen] = useState(defaultOpen)
-  const cfg = STATUS_CONFIG[status]
+  const cfg = ESTIMATE_STATUS_CONFIG[status]
 
   if (estimates.length === 0) return null
 
   return (
     <div>
-      {/* Section header */}
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-2 px-4 py-2 hover:bg-white/[0.02] transition-colors duration-150 group"
@@ -262,29 +302,20 @@ function SectionGroup({ status, estimates, selectedId, onSelect, defaultOpen = t
             transform: open ? 'rotate(0deg)' : 'rotate(-90deg)',
           }}
         />
-        <span
-          className="w-2 h-2 rounded-full flex-shrink-0"
-          style={{ background: cfg.color }}
-        />
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: cfg.color }} />
         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: cfg.color }}>
           {cfg.label}
         </span>
         <span
           className="text-xs font-medium px-1.5 py-0.5 rounded"
-          style={{
-            background: `${cfg.color}18`,
-            color: cfg.color,
-          }}
+          style={{ background: `${cfg.color}18`, color: cfg.color }}
         >
           {estimates.length}
         </span>
-        {/* Section total */}
         <span className="ml-auto text-[#8B9EB3] text-xs">
           {formatMoney(estimates.reduce((s, e) => s + (e.total ?? 0), 0))}
         </span>
       </button>
-
-      {/* Rows */}
       {open && estimates.map(est => (
         <EstimateRow
           key={est.id}
@@ -300,7 +331,7 @@ function SectionGroup({ status, estimates, selectedId, onSelect, defaultOpen = t
 // ─── Board Card ───────────────────────────────────────────────────────────────
 
 function BoardCard({ estimate, onSelect }: { estimate: Estimate; onSelect: () => void }) {
-  const cfg = getStatusCfg(estimate.status)
+  const cfg = getEstimateStatusCfg(estimate.status)
   return (
     <div
       onClick={onSelect}
@@ -345,11 +376,11 @@ function BoardCard({ estimate, onSelect }: { estimate: Estimate; onSelect: () =>
 function BoardColumn({
   status, estimates, onSelect,
 }: {
-  status: StatusKey
+  status: EstimateStatusKey
   estimates: Estimate[]
   onSelect: (id: string) => void
 }) {
-  const cfg = STATUS_CONFIG[status]
+  const cfg = ESTIMATE_STATUS_CONFIG[status]
   return (
     <div
       className="flex flex-col rounded-xl min-h-[200px]"
@@ -386,20 +417,151 @@ function BoardColumn({
   )
 }
 
+// ─── Lead Row ────────────────────────────────────────────────────────────────
+
+interface LeadRowProps {
+  lead: Lead
+  isSelected: boolean
+  onSelect: () => void
+}
+
+function LeadRow({ lead, isSelected, onSelect }: LeadRowProps) {
+  const [hovered, setHovered] = useState(false)
+  const cfg = getLeadStatusCfg(lead.status)
+  const days = daysSince(lead.created_at)
+
+  return (
+    <div
+      onClick={onSelect}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className="relative flex items-center gap-3 px-4 py-3 cursor-pointer transition-all duration-150"
+      style={{
+        borderLeft: `3px solid ${hovered || isSelected ? cfg.color : 'transparent'}`,
+        background: isSelected
+          ? `${cfg.color}0d`
+          : hovered
+            ? 'rgba(255,255,255,0.03)'
+            : 'transparent',
+        borderBottom: '1px solid rgba(255,255,255,0.04)',
+      }}
+    >
+      <div
+        className="w-4 h-4 rounded-full border-2 flex-shrink-0"
+        style={{ borderColor: hovered ? cfg.color : 'rgba(139,158,179,0.4)' }}
+      />
+
+      <div className="flex-1 min-w-0">
+        <span className="text-[#F8F9FA] font-semibold text-sm">{lead.name}</span>
+        {lead.category && (
+          <span className="text-[#8B9EB3] text-xs ml-2">{lead.category}</span>
+        )}
+        {lead.city && (
+          <div className="text-[#8B9EB3] text-xs truncate max-w-xs mt-0.5 opacity-70">
+            {lead.city}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 flex-shrink-0">
+        <LeadStatusPill status={lead.status} />
+        {lead.phone && (
+          <span className="text-[#8B9EB3] text-xs hidden md:inline">{lead.phone}</span>
+        )}
+        <span
+          className="text-xs px-2 py-0.5 rounded font-medium"
+          style={{ background: 'rgba(255,255,255,0.06)', color: '#8B9EB3' }}
+        >
+          {days === 0 ? 'Today' : `${days}d ago`}
+        </span>
+        <ChevronRight
+          className="w-4 h-4 transition-colors duration-150"
+          style={{ color: hovered ? cfg.color : 'rgba(139,158,179,0.4)' }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ─── Lead Section Group ───────────────────────────────────────────────────────
+
+interface LeadSectionProps {
+  status: LeadStatusKey
+  leads: Lead[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  defaultOpen?: boolean
+}
+
+function LeadSectionGroup({ status, leads, selectedId, onSelect, defaultOpen = true }: LeadSectionProps) {
+  const [open, setOpen] = useState(defaultOpen)
+  const cfg = LEAD_STATUS_CONFIG[status]
+
+  if (leads.length === 0) return null
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-4 py-2 hover:bg-white/[0.02] transition-colors duration-150"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+      >
+        <ChevronDown
+          className="w-3.5 h-3.5 transition-transform duration-200"
+          style={{
+            color: '#8B9EB3',
+            transform: open ? 'rotate(0deg)' : 'rotate(-90deg)',
+          }}
+        />
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: cfg.color }} />
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: cfg.color }}>
+          {cfg.label}
+        </span>
+        <span
+          className="text-xs font-medium px-1.5 py-0.5 rounded"
+          style={{ background: `${cfg.color}18`, color: cfg.color }}
+        >
+          {leads.length}
+        </span>
+      </button>
+      {open && leads.map(lead => (
+        <LeadRow
+          key={lead.id}
+          lead={lead}
+          isSelected={selectedId === lead.id}
+          onSelect={() => onSelect(lead.id)}
+        />
+      ))}
+    </div>
+  )
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+type MainTab = 'leads' | 'estimates'
+
 export function BobPipeline() {
+  const [mainTab, setMainTab] = useState<MainTab>('leads')
+
+  // Estimates state
   const [estimates, setEstimates] = useState<Estimate[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
+  const [estLoading, setEstLoading] = useState(true)
+  const [estError, setEstError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('list')
 
+  // Leads state
+  const [leads, setLeads] = useState<Lead[]>([])
+  const [leadsLoading, setLeadsLoading] = useState(true)
+  const [leadsError, setLeadsError] = useState<string | null>(null)
+
+  // Shared
+  const [selected, setSelected] = useState<DrawerSelection | null>(null)
+  const [search, setSearch] = useState('')
+
   useEffect(() => {
-    async function fetchData() {
-      setLoading(true)
-      setError(null)
+    async function fetchEstimates() {
+      setEstLoading(true)
+      setEstError(null)
       try {
         const { data, error: err } = await ovb
           .from('estimates')
@@ -408,23 +570,50 @@ export function BobPipeline() {
         if (err) throw new Error(err.message)
         setEstimates(data || [])
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Unknown error')
+        setEstError(e instanceof Error ? e.message : 'Unknown error')
       } finally {
-        setLoading(false)
+        setEstLoading(false)
       }
     }
-    fetchData()
+    fetchEstimates()
   }, [])
 
-  const active = estimates.filter(e => !e.is_archived && e.status !== 'rejected')
-  const totalPipeline = active.reduce((sum, e) => sum + (e.total || 0), 0)
-  const approvedValue = estimates
-    .filter(e => e.status === 'approved')
-    .reduce((sum, e) => sum + (e.total || 0), 0)
+  useEffect(() => {
+    async function fetchLeads() {
+      setLeadsLoading(true)
+      setLeadsError(null)
+      try {
+        const { data, error: err } = await ovb
+          .from('quote_requests')
+          .select('*')
+          .eq('is_archived', false)
+          .order('created_at', { ascending: false })
+        if (err) throw new Error(err.message)
+        setLeads(data || [])
+      } catch (e) {
+        setLeadsError(e instanceof Error ? e.message : 'Unknown error')
+      } finally {
+        setLeadsLoading(false)
+      }
+    }
+    fetchLeads()
+  }, [])
+
+  // ── Estimate metrics ─────────────────────────────────────────────────────────
+  const activeEst = estimates.filter(e => !e.is_archived && e.status !== 'rejected')
+  const totalPipeline = activeEst.reduce((sum, e) => sum + (e.total || 0), 0)
+  const approvedValue = estimates.filter(e => e.status === 'approved').reduce((sum, e) => sum + (e.total || 0), 0)
   const approvedCount = estimates.filter(e => e.status === 'approved').length
   const sentCount = estimates.filter(e => e.status === 'sent').length
+  const progressTotal = estimates.filter(e => ['draft', 'sent', 'approved'].includes(e.status?.toLowerCase())).length
+  const progressPct = progressTotal > 0 ? Math.round((approvedCount / progressTotal) * 100) : 0
 
-  const filtered = estimates.filter(e => {
+  // ── Lead metrics ──────────────────────────────────────────────────────────────
+  const newThisWeek = leads.filter(l => isThisWeek(l.created_at)).length
+  const convertedCount = leads.filter(l => l.status === 'converted').length
+
+  // ── Filter ────────────────────────────────────────────────────────────────────
+  const filteredEstimates = estimates.filter(e => {
     if (!search) return true
     const q = search.toLowerCase()
     return (
@@ -434,16 +623,28 @@ export function BobPipeline() {
     )
   })
 
-  // Group by status
-  const grouped = Object.fromEntries(
-    STATUSES.map(s => [s, filtered.filter(e => e.status?.toLowerCase() === s)])
-  ) as Record<StatusKey, Estimate[]>
+  const filteredLeads = leads.filter(l => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (
+      l.name?.toLowerCase().includes(q) ||
+      l.category?.toLowerCase().includes(q) ||
+      l.city?.toLowerCase().includes(q) ||
+      l.phone?.toLowerCase().includes(q)
+    )
+  })
 
-  // Progress: approved / (approved + sent + draft)
-  const progressTotal = estimates.filter(e => ['draft', 'sent', 'approved'].includes(e.status?.toLowerCase())).length
-  const progressPct = progressTotal > 0 ? Math.round((approvedCount / progressTotal) * 100) : 0
+  const groupedEstimates = Object.fromEntries(
+    ESTIMATE_STATUSES.map(s => [s, filteredEstimates.filter(e => e.status?.toLowerCase() === s)])
+  ) as Record<EstimateStatusKey, Estimate[]>
 
-  if (loading) {
+  const groupedLeads = Object.fromEntries(
+    LEAD_STATUSES.map(s => [s, filteredLeads.filter(l => l.status?.toLowerCase() === s)])
+  ) as Record<LeadStatusKey, Lead[]>
+
+  const loading = mainTab === 'leads' ? leadsLoading : estLoading
+
+  if (loading && mainTab === 'estimates' && estimates.length === 0) {
     return (
       <div className="flex items-center justify-center h-64" style={{ background: '#0f1117' }}>
         <div className="flex items-center gap-3" style={{ color: '#8B9EB3' }}>
@@ -464,7 +665,6 @@ export function BobPipeline() {
 
           {/* ── Top Bar ─────────────────────────────────────────────── */}
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            {/* Breadcrumb */}
             <div className="flex items-center gap-1.5 text-sm">
               <span style={{ color: '#8B9EB3' }}>Bob</span>
               <ChevronRight className="w-3.5 h-3.5" style={{ color: '#8B9EB3' }} />
@@ -472,32 +672,32 @@ export function BobPipeline() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* View toggle */}
-              <div
-                className="flex items-center rounded-lg p-1 gap-0.5"
-                style={{ background: '#161b27', border: '1px solid rgba(255,255,255,0.06)' }}
-              >
-                {([
-                  { mode: 'list' as ViewMode, icon: <List className="w-3.5 h-3.5" />, label: 'List' },
-                  { mode: 'board' as ViewMode, icon: <LayoutGrid className="w-3.5 h-3.5" />, label: 'Board' },
-                ]).map(({ mode, icon, label }) => (
-                  <button
-                    key={mode}
-                    onClick={() => setViewMode(mode)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150"
-                    style={
-                      viewMode === mode
-                        ? { background: '#4573D2', color: '#fff' }
-                        : { color: '#8B9EB3' }
-                    }
-                  >
-                    {icon}
-                    {label}
-                  </button>
-                ))}
-              </div>
+              {mainTab === 'estimates' && (
+                <div
+                  className="flex items-center rounded-lg p-1 gap-0.5"
+                  style={{ background: '#161b27', border: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  {([
+                    { mode: 'list' as ViewMode, icon: <List className="w-3.5 h-3.5" />, label: 'List' },
+                    { mode: 'board' as ViewMode, icon: <LayoutGrid className="w-3.5 h-3.5" />, label: 'Board' },
+                  ]).map(({ mode, icon, label }) => (
+                    <button
+                      key={mode}
+                      onClick={() => setViewMode(mode)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150"
+                      style={
+                        viewMode === mode
+                          ? { background: '#4573D2', color: '#fff' }
+                          : { color: '#8B9EB3' }
+                      }
+                    >
+                      {icon}
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {/* Search */}
               <div
                 className="flex items-center gap-2 px-3 py-2 rounded-lg"
                 style={{ background: '#161b27', border: '1px solid rgba(255,255,255,0.06)' }}
@@ -506,156 +706,288 @@ export function BobPipeline() {
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Search clients..."
+                  placeholder={mainTab === 'leads' ? 'Search leads...' : 'Search clients...'}
                   className="bg-transparent text-sm placeholder-[#8B9EB3] focus:outline-none w-32"
                   style={{ color: '#F8F9FA' }}
                 />
               </div>
 
-              {/* New estimate button */}
               <button
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-150 hover:brightness-110 active:scale-95"
                 style={{ background: '#F06A6A', color: '#fff' }}
               >
                 <Plus className="w-4 h-4" />
-                New Estimate
+                {mainTab === 'leads' ? 'New Lead' : 'New Estimate'}
               </button>
             </div>
           </div>
 
-          {error && (
+          {/* ── Main Tab Bar ─────────────────────────────────────────── */}
+          <div
+            className="flex rounded-xl p-1 gap-1"
+            style={{ background: '#161b27', border: '1px solid rgba(255,255,255,0.06)', width: 'fit-content' }}
+          >
+            {([
+              { key: 'leads' as MainTab, label: 'Leads Pipeline', icon: <PhoneCall className="w-3.5 h-3.5" /> },
+              { key: 'estimates' as MainTab, label: 'Estimates', icon: <FileText className="w-3.5 h-3.5" /> },
+            ]).map(({ key, label, icon }) => (
+              <button
+                key={key}
+                onClick={() => { setMainTab(key); setSearch('') }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150"
+                style={
+                  mainTab === key
+                    ? { background: '#4573D2', color: '#fff' }
+                    : { color: '#8B9EB3' }
+                }
+              >
+                {icon}
+                {label}
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded-full"
+                  style={{
+                    background: mainTab === key ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.06)',
+                    color: mainTab === key ? '#fff' : '#8B9EB3',
+                  }}
+                >
+                  {key === 'leads' ? leads.length : estimates.length}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── Metrics ─────────────────────────────────────────────── */}
+          {mainTab === 'leads' ? (
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              <MetricCard
+                label="Total Leads"
+                value={leads.length}
+                sub={`${filteredLeads.length} shown`}
+                accentColor="#94a3b8"
+                icon={<Users className="w-4 h-4" />}
+              />
+              <MetricCard
+                label="New This Week"
+                value={newThisWeek}
+                sub="last 7 days"
+                accentColor="#4573D2"
+                icon={<PhoneCall className="w-4 h-4" />}
+              />
+              <MetricCard
+                label="Converted"
+                value={convertedCount}
+                sub={leads.length > 0 ? `${Math.round((convertedCount / leads.length) * 100)}% rate` : '0% rate'}
+                accentColor="#37C68B"
+                icon={<CheckCircle className="w-4 h-4" />}
+              />
+              <MetricCard
+                label="Pipeline Value"
+                value={formatMoney(totalPipeline)}
+                sub={`${activeEst.length} estimates`}
+                accentColor="#F59E0B"
+                icon={<TrendingUp className="w-4 h-4" />}
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              <MetricCard
+                label="Total Estimates"
+                value={estimates.length}
+                sub={`${filteredEstimates.length} shown`}
+                accentColor="#4573D2"
+                icon={<FileText className="w-4 h-4" />}
+              />
+              <MetricCard
+                label="Active Pipeline"
+                value={activeEst.length}
+                sub={`${sentCount} awaiting response`}
+                accentColor="#8B9EB3"
+                icon={<Clock className="w-4 h-4" />}
+              />
+              <MetricCard
+                label="Approved Value"
+                value={formatMoney(approvedValue)}
+                sub={`${approvedCount} contracts`}
+                accentColor="#37C68B"
+                icon={<CheckCircle className="w-4 h-4" />}
+              />
+              <MetricCard
+                label="Total Pipeline"
+                value={formatMoney(totalPipeline)}
+                sub={`${progressPct}% close rate`}
+                accentColor="#F06A6A"
+                icon={<TrendingUp className="w-4 h-4" />}
+              />
+            </div>
+          )}
+
+          {/* Progress bar (estimates only) */}
+          {mainTab === 'estimates' && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-medium" style={{ color: '#8B9EB3' }}>
+                  Pipeline close rate
+                </span>
+                <span className="text-xs font-semibold" style={{ color: '#37C68B' }}>
+                  {progressPct}%
+                </span>
+              </div>
+              <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${progressPct}%`,
+                    background: 'linear-gradient(90deg, #4573D2, #37C68B)',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Error Banner ──────────────────────────────────────────── */}
+          {(mainTab === 'leads' ? leadsError : estError) && (
             <div
               className="px-4 py-3 rounded-xl text-sm"
               style={{ background: 'rgba(240,106,106,0.1)', border: '1px solid rgba(240,106,106,0.25)', color: '#F06A6A' }}
             >
-              {error}
+              {mainTab === 'leads' ? leadsError : estError}
             </div>
           )}
 
-          {/* ── Metrics ─────────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <MetricCard
-              label="Total Estimates"
-              value={estimates.length}
-              sub={`${filtered.length} shown`}
-              accentColor="#4573D2"
-              icon={<FileText className="w-4 h-4" />}
-            />
-            <MetricCard
-              label="Active Pipeline"
-              value={active.length}
-              sub={`${sentCount} awaiting response`}
-              accentColor="#8B9EB3"
-              icon={<Clock className="w-4 h-4" />}
-            />
-            <MetricCard
-              label="Approved Value"
-              value={formatMoney(approvedValue)}
-              sub={`${approvedCount} contracts`}
-              accentColor="#37C68B"
-              icon={<CheckCircle className="w-4 h-4" />}
-            />
-            <MetricCard
-              label="Total Pipeline"
-              value={formatMoney(totalPipeline)}
-              sub={`${progressPct}% close rate`}
-              accentColor="#F06A6A"
-              icon={<TrendingUp className="w-4 h-4" />}
-            />
-          </div>
-
-          {/* Progress bar */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-medium" style={{ color: '#8B9EB3' }}>
-                Pipeline close rate
-              </span>
-              <span className="text-xs font-semibold" style={{ color: '#37C68B' }}>
-                {progressPct}%
-              </span>
-            </div>
-            <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${progressPct}%`,
-                  background: 'linear-gradient(90deg, #4573D2, #37C68B)',
-                }}
-              />
-            </div>
-          </div>
-
-          {/* ── Content Area ─────────────────────────────────────────── */}
-          {viewMode === 'list' ? (
-            /* LIST VIEW */
-            <div
-              className="rounded-xl overflow-hidden"
-              style={{
-                background: '#161b27',
-                border: '1px solid rgba(255,255,255,0.06)',
-              }}
-            >
-              {/* Table header row */}
-              <div
-                className="flex items-center gap-3 px-4 py-2.5"
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-              >
-                <div className="w-4 flex-shrink-0" />
-                <span className="flex-1 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#8B9EB3' }}>
-                  Client / Project
-                </span>
-                <div className="flex items-center gap-3 flex-shrink-0 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#8B9EB3' }}>
-                  <span className="w-20 text-center">Status</span>
-                  <span className="w-20 text-right">Amount</span>
-                  <span className="w-16 text-center">Date</span>
-                  <span className="w-16" />
-                  <span className="w-4" />
+          {/* ── Leads Tab Content ─────────────────────────────────────── */}
+          {mainTab === 'leads' && (
+            leadsLoading ? (
+              <div className="flex items-center justify-center h-40">
+                <div className="flex items-center gap-3" style={{ color: '#8B9EB3' }}>
+                  <div
+                    className="w-5 h-5 border-2 rounded-full animate-spin"
+                    style={{ borderColor: '#94a3b8', borderTopColor: 'transparent' }}
+                  />
+                  <span className="text-sm">Loading leads...</span>
                 </div>
               </div>
-
-              {filtered.length === 0 ? (
-                <div className="py-16 text-center">
-                  <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" style={{ color: '#8B9EB3' }} />
-                  <p className="text-sm font-medium" style={{ color: '#8B9EB3' }}>No estimates match your search</p>
-                  <p className="text-xs mt-1 opacity-60" style={{ color: '#8B9EB3' }}>Try adjusting your search query</p>
+            ) : (
+              <div
+                className="rounded-xl overflow-hidden"
+                style={{ background: '#161b27', border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                {/* Table header */}
+                <div
+                  className="flex items-center gap-3 px-4 py-2.5"
+                  style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  <div className="w-4 flex-shrink-0" />
+                  <span className="flex-1 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#8B9EB3' }}>
+                    Lead / Category
+                  </span>
+                  <div className="flex items-center gap-3 flex-shrink-0 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#8B9EB3' }}>
+                    <span className="w-24 text-center">Status</span>
+                    <span className="w-24 text-right">Phone</span>
+                    <span className="w-16 text-center">Age</span>
+                    <span className="w-4" />
+                  </div>
                 </div>
-              ) : (
-                STATUSES.map(status => (
-                  <SectionGroup
+
+                {filteredLeads.length === 0 ? (
+                  <div className="py-16 text-center">
+                    <Users className="w-10 h-10 mx-auto mb-3 opacity-20" style={{ color: '#8B9EB3' }} />
+                    <p className="text-sm font-medium" style={{ color: '#8B9EB3' }}>No leads match your search</p>
+                    <p className="text-xs mt-1 opacity-60" style={{ color: '#8B9EB3' }}>Leads from Bob's Telegram bot appear here</p>
+                  </div>
+                ) : (
+                  LEAD_STATUSES.map(status => (
+                    <LeadSectionGroup
+                      key={status}
+                      status={status}
+                      leads={groupedLeads[status]}
+                      selectedId={selected?.type === 'lead' ? selected.id : null}
+                      onSelect={id => setSelected({ id, type: 'lead' })}
+                      defaultOpen={status !== 'lost' && status !== 'converted'}
+                    />
+                  ))
+                )}
+              </div>
+            )
+          )}
+
+          {/* ── Estimates Tab Content ─────────────────────────────────── */}
+          {mainTab === 'estimates' && (
+            estLoading && estimates.length === 0 ? (
+              <div className="flex items-center justify-center h-40">
+                <div className="flex items-center gap-3" style={{ color: '#8B9EB3' }}>
+                  <div
+                    className="w-5 h-5 border-2 rounded-full animate-spin"
+                    style={{ borderColor: '#4573D2', borderTopColor: 'transparent' }}
+                  />
+                  <span className="text-sm">Loading estimates...</span>
+                </div>
+              </div>
+            ) : viewMode === 'list' ? (
+              <div
+                className="rounded-xl overflow-hidden"
+                style={{ background: '#161b27', border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <div
+                  className="flex items-center gap-3 px-4 py-2.5"
+                  style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  <div className="w-4 flex-shrink-0" />
+                  <span className="flex-1 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#8B9EB3' }}>
+                    Client / Project
+                  </span>
+                  <div className="flex items-center gap-3 flex-shrink-0 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#8B9EB3' }}>
+                    <span className="w-20 text-center">Status</span>
+                    <span className="w-20 text-right">Amount</span>
+                    <span className="w-16 text-center">Date</span>
+                    <span className="w-16" />
+                    <span className="w-4" />
+                  </div>
+                </div>
+
+                {filteredEstimates.length === 0 ? (
+                  <div className="py-16 text-center">
+                    <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" style={{ color: '#8B9EB3' }} />
+                    <p className="text-sm font-medium" style={{ color: '#8B9EB3' }}>No estimates match your search</p>
+                    <p className="text-xs mt-1 opacity-60" style={{ color: '#8B9EB3' }}>Try adjusting your search query</p>
+                  </div>
+                ) : (
+                  ESTIMATE_STATUSES.map(status => (
+                    <EstimateSectionGroup
+                      key={status}
+                      status={status}
+                      estimates={groupedEstimates[status]}
+                      selectedId={selected?.type === 'estimate' ? selected.id : null}
+                      onSelect={id => setSelected({ id, type: 'estimate' })}
+                      defaultOpen={status !== 'rejected'}
+                    />
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                {ESTIMATE_STATUSES.map(status => (
+                  <BoardColumn
                     key={status}
                     status={status}
-                    estimates={grouped[status]}
-                    selectedId={selectedId}
-                    onSelect={setSelectedId}
-                    defaultOpen={status !== 'rejected'}
+                    estimates={groupedEstimates[status]}
+                    onSelect={id => setSelected({ id, type: 'estimate' })}
                   />
-                ))
-              )}
-            </div>
-          ) : (
-            /* BOARD VIEW */
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-              {STATUSES.map(status => (
-                <BoardColumn
-                  key={status}
-                  status={status}
-                  estimates={grouped[status]}
-                  onSelect={setSelectedId}
-                />
-              ))}
-            </div>
+                ))}
+              </div>
+            )
           )}
 
           {/* Footer count */}
           <div className="text-xs pb-2" style={{ color: '#8B9EB3' }}>
-            Showing {filtered.length} of {estimates.length} estimates
-            {search && ` matching "${search}"`}
-            {' '}— click any row to open client folder
+            {mainTab === 'leads'
+              ? `Showing ${filteredLeads.length} of ${leads.length} leads${search ? ` matching "${search}"` : ''} — click any row to open lead details`
+              : `Showing ${filteredEstimates.length} of ${estimates.length} estimates${search ? ` matching "${search}"` : ''} — click any row to open client folder`
+            }
           </div>
         </div>
       </div>
 
-      <ClientDrawer estimateId={selectedId} onClose={() => setSelectedId(null)} />
+      <ClientDrawer selected={selected} onClose={() => setSelected(null)} />
     </>
   )
 }

@@ -117,6 +117,24 @@ export interface Estimate {
   client_token: string | null
 }
 
+export interface Lead {
+  id: string
+  name: string
+  phone: string | null
+  email: string | null
+  category: string | null
+  details: string | null
+  street_address: string | null
+  city: string | null
+  state: string | null
+  status: string
+  is_archived: boolean | null
+  images: string[] | null
+  intake_data: Record<string, unknown> | null
+  created_at: string
+  updated_at: string | null
+}
+
 export interface CustomerFile {
   id: string
   customer_id: string
