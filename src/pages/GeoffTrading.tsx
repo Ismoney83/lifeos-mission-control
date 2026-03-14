@@ -6,13 +6,26 @@ import { GeoffChart } from '../components/GeoffChart'
 import {
   TrendingUp, Activity, BarChart2, Zap, CheckCircle, XCircle,
   Terminal, Send, ExternalLink, RefreshCw, AlertTriangle,
-  DollarSign, Target
+  DollarSign, Target, BookOpen
 } from 'lucide-react'
 import {
-  XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart
+  XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart,
+  BarChart, Bar, Cell, PieChart, Pie, LineChart, Line, CartesianGrid
 } from 'recharts'
 
-type Tab = 'chart' | 'overview' | 'positions' | 'signals' | 'history' | 'control'
+type Tab = 'chart' | 'overview' | 'positions' | 'signals' | 'history' | 'strategies' | 'control'
+
+interface BacktestResult {
+  id: string
+  strategy_name: string
+  win_rate: number
+  total_trades: number
+  winning_trades: number
+  avg_profit_pct: number | null
+  total_return_pct: number | null
+  verdict: string | null
+  created_at: string
+}
 
 function signalBadge(strength: string) {
   switch (strength?.toUpperCase()) {
@@ -53,6 +66,7 @@ export function GeoffTrading() {
   const [signals, setSignals] = useState<XenaAlphaSignal[]>([])
   const [trades, setTrades] = useState<Trade[]>([])
   const [pmTrades, setPmTrades] = useState<GeoffPMTrade[]>([])
+  const [backtest, setBacktest] = useState<BacktestResult[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [command, setCommand] = useState('')
@@ -68,16 +82,18 @@ export function GeoffTrading() {
     setLoading(true)
     setError(null)
     try {
-      const [posRes, sigRes, tradeRes, pmRes] = await Promise.all([
+      const [posRes, sigRes, tradeRes, pmRes, btRes] = await Promise.all([
         lifeos.from('geoff_positions').select('*').order('created_at', { ascending: false }),
-        lifeos.from('xena_alpha_signals').select('*').order('score', { ascending: false }).limit(50),
-        lifeos.from('trades').select('*').order('created_at', { ascending: false }).limit(50),
-        lifeos.from('geoff_pm_trades').select('*').order('created_at', { ascending: false }).limit(50),
+        lifeos.from('xena_alpha_signals').select('*').order('score', { ascending: false }).limit(100),
+        lifeos.from('trades').select('*').order('created_at', { ascending: false }).limit(200),
+        lifeos.from('geoff_pm_trades').select('*').order('created_at', { ascending: false }).limit(200),
+        lifeos.from('geoff_backtest_results').select('*').order('win_rate', { ascending: false }).limit(20),
       ])
       setPositions(posRes.data || [])
       setSignals(sigRes.data || [])
       setTrades(tradeRes.data || [])
       setPmTrades(pmRes.data || [])
+      setBacktest(btRes.data || [])
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')
     } finally {
@@ -148,6 +164,7 @@ export function GeoffTrading() {
   const tabs: { key: Tab; label: string; badge?: number }[] = [
     { key: 'chart', label: '📈 Chart' },
     { key: 'overview', label: 'Overview' },
+    { key: 'strategies', label: '🎯 Strategies' },
     { key: 'positions', label: 'Positions', badge: positions.length },
     { key: 'signals', label: 'Signals', badge: pendingSignals || undefined },
     { key: 'history', label: 'History', badge: undefined },
@@ -426,6 +443,174 @@ export function GeoffTrading() {
         </div>
       )}
 
+      {/* STRATEGIES TAB */}
+      {tab === 'strategies' && (
+        <div className="space-y-6">
+          {/* Backtest Win Rate Chart */}
+          {backtest.length > 0 ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart2 className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-white font-semibold">Strategy Win Rates (Backtested)</h3>
+                <span className="text-gray-500 text-xs ml-auto">1m candles · 12.5× leverage</span>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart
+                  data={backtest.map(b => ({
+                    name: b.strategy_name.replace(/_/g, ' ').replace('bull flag', '🚩').replace('first green', '🟢').slice(0, 20),
+                    winRate: parseFloat((b.win_rate || 0).toFixed(1)),
+                    trades: b.total_trades,
+                  }))}
+                  layout="vertical"
+                  margin={{ left: 10, right: 50 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" horizontal={false} />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false} tickFormatter={v => `${v}%`} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: '#d1d5db', fontSize: 11 }}
+                    width={140} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+                    formatter={(v: number, name) => [name === 'winRate' ? `${v}%` : v, name === 'winRate' ? 'Win Rate' : 'Trades']}
+                  />
+                  <ReferenceLine x={50} stroke="#374151" strokeDasharray="4 4" />
+                  <Bar dataKey="winRate" radius={[0, 4, 4, 0]}
+                    label={{ position: 'right', fill: '#9ca3af', fontSize: 10, formatter: (v: number) => `${v}%` }}>
+                    {backtest.map((b, i) => (
+                      <Cell key={i} fill={b.win_rate >= 60 ? '#10b981' : b.win_rate >= 50 ? '#3b82f6' : '#ef4444'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : null}
+
+          {/* Trade Count + PnL chart */}
+          {backtest.length > 0 && (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <h3 className="text-white font-semibold mb-4 text-sm">Trades Tested per Strategy</h3>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={backtest.map(b => ({ name: b.strategy_name.replace(/_/g, ' ').slice(0, 18), trades: b.total_trades, wins: b.winning_trades }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                    <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 9 }} tickLine={false} />
+                    <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }} />
+                    <Bar dataKey="trades" name="Total" fill="#374151" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="wins" name="Wins" fill="#10b981" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Win / Loss pie for top strategy */}
+              {backtest[0] && (
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col">
+                  <h3 className="text-white font-semibold mb-1 text-sm">Top Strategy: {backtest[0].strategy_name.replace(/_/g, ' ')}</h3>
+                  <p className="text-gray-500 text-xs mb-4">{backtest[0].verdict || 'Backtested on historical signals'}</p>
+                  <div className="flex items-center justify-center flex-1">
+                    <ResponsiveContainer width="100%" height={160}>
+                      <PieChart>
+                        <Pie
+                          data={[
+                            { name: 'Wins', value: backtest[0].winning_trades },
+                            { name: 'Losses', value: backtest[0].total_trades - backtest[0].winning_trades },
+                          ]}
+                          cx="50%" cy="50%" innerRadius={45} outerRadius={65}
+                          paddingAngle={3} dataKey="value"
+                        >
+                          <Cell fill="#10b981" />
+                          <Cell fill="#ef4444" />
+                        </Pie>
+                        <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex justify-center gap-6 text-xs">
+                    <div className="text-center">
+                      <p className="text-3xl font-bold text-emerald-400">{(backtest[0].win_rate || 0).toFixed(0)}%</p>
+                      <p className="text-gray-500">Win Rate</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-3xl font-bold text-blue-400">{backtest[0].total_trades}</p>
+                      <p className="text-gray-500">Trades</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Strategy Guide Cards */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {[
+              {
+                icon: '🚩', name: 'Bull Flag', color: 'border-blue-500/30 bg-blue-500/5',
+                tagline: 'Momentum consolidation breakout',
+                explain: 'Token pumps hard (flagpole), consolidates sideways ≤1% for 3 candles (the flag), then breaks up again. We buy at the breakout.',
+                params: 'Range ≤ 1.0% · TP = 2× range · SL = consolidation low',
+                result: '72.7% WR · +9.79% avg leveraged PnL · 22 trades',
+              },
+              {
+                icon: '🟢', name: 'First Green After 3 Reds', color: 'border-emerald-500/30 bg-emerald-500/5',
+                tagline: 'Mean-reversion bounce',
+                explain: 'After 3 consecutive red candles (panic selling overshoots), the first green candle signals smart money stepping in.',
+                params: '3 reds → buy first green · TP +3% · SL -1.5%',
+                result: '57.1% WR · +10.83% avg leveraged PnL · 70 trades',
+              },
+              {
+                icon: '📉', name: 'Short Post-Pump', color: 'border-red-500/30 bg-red-500/5',
+                tagline: 'Hype-fade reversal short',
+                explain: 'After a token pumps >15% in 5 min, the hype dies and early buyers sell. We short the fade. High risk, best in bear markets.',
+                params: 'Pump >15% → short · TP = 50% of pump · SL = new high',
+                result: 'Best in bearish conditions',
+              },
+              {
+                icon: '⚡', name: 'Drift Scalper (SOL-PERP)', color: 'border-purple-500/30 bg-purple-500/5',
+                tagline: 'Leverage momentum — Drift Protocol',
+                explain: 'Reads SOL perpetual funding rate + price momentum. Enters 10× leveraged longs/shorts when both signals align. Now LIVE.',
+                params: '$2 collateral × 10x · TP +2% · SL -1% · Max 5min hold',
+                result: '🔴 LIVE — $25 USDC allocated on Drift',
+              },
+            ].map(({ icon, name, color, tagline, explain, params, result }) => (
+              <div key={name} className={`rounded-xl border p-5 ${color}`}>
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">{icon}</span>
+                  <div>
+                    <h3 className="text-white font-semibold text-sm">{name}</h3>
+                    <p className="text-gray-400 text-xs italic mb-2">{tagline}</p>
+                    <p className="text-gray-300 text-xs leading-relaxed mb-2">{explain}</p>
+                    <p className="font-mono text-gray-500 text-[11px] mb-1">{params}</p>
+                    <p className="text-emerald-400 text-[11px]">{result}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Score tiers */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <BookOpen className="w-4 h-4 text-yellow-400" />
+              <h3 className="text-white font-semibold text-sm">Signal Score Tiers</h3>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { range: '55–64', label: 'Watch', desc: 'Paper only', color: 'border-gray-700 text-gray-400' },
+                { range: '65–74', label: 'Moderate', desc: 'Small paper trade', color: 'border-blue-700/50 text-blue-400' },
+                { range: '75–84', label: 'High', desc: 'Active paper', color: 'border-yellow-700/50 text-yellow-400' },
+                { range: '85+',   label: 'Max', desc: 'Live candidate', color: 'border-emerald-700/50 text-emerald-400' },
+              ].map(({ range, label, desc, color }) => (
+                <div key={range} className={`rounded-lg border p-3 bg-gray-800/40 ${color}`}>
+                  <p className="font-mono text-lg font-bold">{range}</p>
+                  <p className="font-semibold text-xs mt-0.5">{label}</p>
+                  <p className="text-gray-600 text-xs">{desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CONTROL TAB */}
       {tab === 'control' && (
         <div className="space-y-5">
@@ -470,10 +655,13 @@ export function GeoffTrading() {
             </p>
             <div className="flex gap-2">
               <textarea
+                id="geoff-command-input"
+                name="geoff-command"
                 value={command}
                 onChange={e => setCommand(e.target.value)}
                 placeholder="e.g. GEOFF: analyze SOL/USD technical setup and give entry recommendation"
                 rows={3}
+                autoComplete="off"
                 className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-emerald-500 resize-none"
                 onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendCommand() }}
               />

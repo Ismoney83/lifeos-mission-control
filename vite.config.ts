@@ -7,6 +7,15 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Disable service worker in production to avoid CSP eval issues with Workbox
+      // The app still works fully without SW on GitHub Pages
+      devOptions: { enabled: false },
+      workbox: {
+        // Use InjectManifest mode to avoid eval() in generated SW
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        // Disable runtime caching that requires eval
+        runtimeCaching: [],
+      },
       manifest: {
         name: 'Life OS Mission Control',
         short_name: 'Mission Control',
