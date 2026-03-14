@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Wrench, TrendingUp, Sparkles, CheckSquare, Zap, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Wrench, TrendingUp, Sparkles, CheckSquare, Zap, Menu, X, Crown } from 'lucide-react'
 
 const navItems = [
   { to: '/', label: 'Dashboard',      icon: LayoutDashboard, color: '#94a3b8', dot: '#94a3b8' },
+  { to: '/ralph', label: 'Ralph',     icon: Crown,           color: '#a855f7', dot: '#a855f7' },
   { to: '/bob',  label: 'Bob Pipeline',  icon: Wrench,          color: '#4573D2', dot: '#4573D2' },
   { to: '/geoff',label: 'GEOFF Trading', icon: TrendingUp,      color: '#22C55E', dot: '#22C55E' },
   { to: '/xena', label: 'Xena Hub',      icon: Sparkles,        color: '#A855F7', dot: '#A855F7' },

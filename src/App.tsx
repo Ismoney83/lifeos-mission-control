@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './pages/Dashboard'
+import { Ralph } from './pages/Ralph'
 import { BobPipeline } from './pages/BobPipeline'
 import { GeoffTrading } from './pages/GeoffTrading'
 import { XenaSignals } from './pages/XenaSignals'
@@ -9,11 +10,12 @@ import { Tasks } from './pages/Tasks'
 function App() {
   return (
     <BrowserRouter basename="/lifeos-mission-control/">
-      <div className="flex min-h-screen bg-gray-950">
+      <div className="flex min-h-screen bg-[#0d0e13]">
         <Sidebar />
         <main className="flex-1 overflow-auto pt-14 md:pt-0">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/ralph" element={<Ralph />} />
             <Route path="/bob" element={<BobPipeline />} />
             <Route path="/geoff" element={<GeoffTrading />} />
             <Route path="/xena" element={<XenaSignals />} />

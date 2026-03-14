@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ovb } from '../lib/supabase'
+import { lifeos, ovb } from '../lib/supabase'
 import type { Estimate, CustomerFile, ClientProject } from '../types'
 import {
   X, FileText, FolderOpen, Briefcase, Edit2, Save, ExternalLink,
@@ -57,6 +57,28 @@ export function ClientDrawer({ estimateId, onClose }: Props) {
   const [editForm, setEditForm] = useState<Partial<Estimate>>({})
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (files.length === 0) return
+    async function genUrls() {
+      const urls: Record<string, string> = {}
+      for (const f of files) {
+        if (f.file_path) {
+          const { data } = await ovb.storage.from('customer-files').createSignedUrl(f.file_path, 3600)
+          if (data?.signedUrl) {
+            urls[f.id] = data.signedUrl
+          } else if (f.file_url) {
+            urls[f.id] = f.file_url
+          }
+        } else if (f.file_url) {
+          urls[f.id] = f.file_url
+        }
+      }
+      setSignedUrls(urls)
+    }
+    genUrls()
+  }, [files])
 
   useEffect(() => {
     if (!estimateId) return
@@ -116,6 +138,16 @@ export function ClientDrawer({ estimateId, onClose }: Props) {
       setSaveMsg('Saved!')
       setEditing(false)
       setTimeout(() => setSaveMsg(''), 2000)
+      // Notify agents of the change
+      await lifeos.from('harness_tasks').insert({
+        task_id: `BOB-UPDATE-${Date.now()}`,
+        title: `Client record updated: ${editForm.customer_name}`,
+        description: `Mission Control updated estimate for ${editForm.customer_name}. Status: ${editForm.status}. Notes: ${editForm.notes || 'none'}`,
+        owner_agent: 'ralph',
+        routed_to: 'ralph',
+        status: 'pending',
+        priority: 'normal',
+      })
     }
   }
 
@@ -368,7 +400,7 @@ export function ClientDrawer({ estimateId, onClose }: Props) {
                   {files.map(file => (
                     <a
                       key={file.id}
-                      href={file.file_url}
+                      href={signedUrls[file.id] || file.file_url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-3 p-3 bg-gray-900 border border-gray-800 rounded-xl hover:border-blue-500/40 hover:bg-gray-800/50 transition-all group"

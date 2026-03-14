@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Canvas as FabricCanvas, Rect, IText, Circle, Triangle, Gradient, FabricImage } from 'fabric'
 import { lifeos } from '../lib/supabase'
 import type { XenaAlphaSignal, XenaContent, XenaPillar } from '../types'
 import {
@@ -7,7 +8,7 @@ import {
   Twitter, Instagram, Linkedin, Youtube, Hash, Sparkles, Search
 } from 'lucide-react'
 
-type Tab = 'calendar' | 'posts' | 'creator' | 'pillars' | 'alpha'
+type Tab = 'calendar' | 'posts' | 'creator' | 'pillars' | 'alpha' | 'studio'
 
 const PLATFORMS = ['twitter', 'instagram', 'linkedin', 'youtube', 'tiktok', 'threads']
 
@@ -121,6 +122,22 @@ const PILLAR_TEMPLATES: Record<string, string[]> = {
   ],
 }
 
+const TEMPLATES = [
+  { name: 'Purple Gradient', gradient: ['#7B2FBE', '#00C4CC'] },
+  { name: 'Dark Gold', gradient: ['#1a1a2a', '#f59e0b'] },
+  { name: 'Fire', gradient: ['#7f1d1d', '#ea580c'] },
+  { name: 'Ocean', gradient: ['#0c4a6e', '#06b6d4'] },
+  { name: 'Midnight', gradient: ['#0f172a', '#334155'] },
+  { name: 'Neon', gradient: ['#0a0a0f', '#22ff88'] },
+]
+
+const CANVAS_SIZES = [
+  { name: '800×600', w: 800, h: 600 },
+  { name: '1080×1080 (IG)', w: 1080, h: 1080 },
+  { name: '1920×1080 (Banner)', w: 1920, h: 1080 },
+  { name: '1080×1920 (Story)', w: 1080, h: 1920 },
+]
+
 export function XenaSignals() {
   const [tab, setTab] = useState<Tab>('calendar')
   const [posts, setPosts] = useState<XenaContent[]>([])
@@ -130,6 +147,11 @@ export function XenaSignals() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Studio refs
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const fabricRef = useRef<FabricCanvas | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [newPost, setNewPost] = useState({
     content: '',
@@ -143,6 +165,21 @@ export function XenaSignals() {
   useEffect(() => {
     load()
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'studio' || !canvasRef.current) return
+    if (fabricRef.current) return // already initialized
+    const canvas = new FabricCanvas(canvasRef.current, {
+      width: 800,
+      height: 600,
+      backgroundColor: '#1a1a2a',
+    })
+    fabricRef.current = canvas
+    return () => {
+      canvas.dispose()
+      fabricRef.current = null
+    }
+  }, [tab])
 
   async function load() {
     setLoading(true)
@@ -179,6 +216,130 @@ export function XenaSignals() {
     }
   }
 
+  // ── Studio helpers ──────────────────────────────────────────────────────────
+  function applyTemplate(colors: string[]) {
+    if (!fabricRef.current) return
+    const canvas = fabricRef.current
+    const existing = canvas.getObjects().find(o => (o as any)._isBackground)
+    if (existing) canvas.remove(existing)
+    const rect = new Rect({
+      width: canvas.getWidth(), height: canvas.getHeight(), left: 0, top: 0,
+      selectable: false, evented: false,
+    })
+    ;(rect as any)._isBackground = true
+    const gradient = new Gradient({
+      type: 'linear',
+      coords: { x1: 0, y1: 0, x2: canvas.getWidth(), y2: canvas.getHeight() },
+      colorStops: [
+        { offset: 0, color: colors[0] },
+        { offset: 1, color: colors[1] },
+      ],
+    })
+    rect.set('fill', gradient)
+    canvas.add(rect)
+    canvas.sendObjectToBack(rect)
+    canvas.renderAll()
+  }
+
+  function addText(style: 'title' | 'subtitle' | 'meme-top' | 'meme-bottom' | 'body') {
+    if (!fabricRef.current) return
+    const cw = fabricRef.current.getWidth()
+    const ch = fabricRef.current.getHeight()
+    const configs = {
+      'title':       { text: 'YOUR TITLE',                                  fontSize: 60, top: ch * 0.16, fontWeight: 'bold',   fill: '#ffffff', stroke: '#000000', strokeWidth: 2 },
+      'subtitle':    { text: 'Subtitle text here',                           fontSize: 32, top: ch * 0.33, fontWeight: 'normal', fill: '#e2e8f0', stroke: '',         strokeWidth: 0 },
+      'meme-top':    { text: 'TOP TEXT',                                     fontSize: 48, top: ch * 0.03, fontWeight: 'bold',   fill: '#ffffff', stroke: '#000000', strokeWidth: 3 },
+      'meme-bottom': { text: 'BOTTOM TEXT',                                  fontSize: 48, top: ch * 0.87, fontWeight: 'bold',   fill: '#ffffff', stroke: '#000000', strokeWidth: 3 },
+      'body':        { text: 'Body text goes here\nMultiple lines supported', fontSize: 24, top: ch * 0.50, fontWeight: 'normal', fill: '#cbd5e1', stroke: '',         strokeWidth: 0 },
+    }
+    const cfg = configs[style]
+    const textObj = new IText(cfg.text, {
+      left: cw / 2,
+      top: cfg.top,
+      originX: 'center',
+      fontSize: cfg.fontSize,
+      fontFamily: 'Impact, Arial Black, sans-serif',
+      fontWeight: cfg.fontWeight as string,
+      fill: cfg.fill,
+      stroke: cfg.stroke || undefined,
+      strokeWidth: cfg.strokeWidth,
+      textAlign: 'center',
+    })
+    fabricRef.current.add(textObj)
+    fabricRef.current.setActiveObject(textObj)
+    fabricRef.current.renderAll()
+  }
+
+  function addShape(type: 'rect' | 'circle' | 'triangle') {
+    if (!fabricRef.current) return
+    const cw = fabricRef.current.getWidth()
+    const ch = fabricRef.current.getHeight()
+    const opts = { left: cw / 2, top: ch / 2, originX: 'center' as const, originY: 'center' as const, fill: 'rgba(123,47,190,0.7)', stroke: '#a855f7', strokeWidth: 2 }
+    let shape
+    if (type === 'rect') shape = new Rect({ ...opts, width: 200, height: 100, rx: 8, ry: 8 })
+    else if (type === 'circle') shape = new Circle({ ...opts, radius: 60 })
+    else shape = new Triangle({ ...opts, width: 120, height: 120 })
+    fabricRef.current.add(shape)
+    fabricRef.current.setActiveObject(shape)
+    fabricRef.current.renderAll()
+  }
+
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !fabricRef.current) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string
+      FabricImage.fromURL(dataUrl).then((img) => {
+        const scale = Math.min(400 / (img.width || 400), 400 / (img.height || 400))
+        img.scale(scale)
+        img.set({ left: fabricRef.current!.getWidth() / 2, top: fabricRef.current!.getHeight() / 2, originX: 'center', originY: 'center' })
+        fabricRef.current!.add(img)
+        fabricRef.current!.setActiveObject(img)
+        fabricRef.current!.renderAll()
+      })
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function exportCanvas() {
+    if (!fabricRef.current) return
+    const dataURL = fabricRef.current.toDataURL({ format: 'png', quality: 1, multiplier: 1 })
+    const link = document.createElement('a')
+    link.download = `xena-studio-${Date.now()}.png`
+    link.href = dataURL
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  function clearCanvas() {
+    if (!fabricRef.current) return
+    fabricRef.current.clear()
+    fabricRef.current.backgroundColor = '#1a1a2a'
+    fabricRef.current.renderAll()
+  }
+
+  function deleteSelected() {
+    if (!fabricRef.current) return
+    const active = fabricRef.current.getActiveObject()
+    if (active) fabricRef.current.remove(active)
+  }
+
+  function resizeCanvas(w: number, h: number) {
+    if (!fabricRef.current) return
+    fabricRef.current.setWidth(w)
+    fabricRef.current.setHeight(h)
+    fabricRef.current.renderAll()
+  }
+
+  const MEME_PRESETS = [
+    { name: 'Classic Meme',       action: () => { applyTemplate(['#000000', '#1a1a1a']); addText('meme-top'); addText('meme-bottom') } },
+    { name: 'Announcement Flyer', action: () => { applyTemplate(['#7B2FBE', '#00C4CC']); addText('title'); addText('subtitle') } },
+    { name: 'Dark Warning',       action: () => { applyTemplate(['#7f1d1d', '#ea580c']); addText('title') } },
+  ]
+  // ── End studio helpers ───────────────────────────────────────────────────────
+
   const weekDays = getWeekDays()
   const publishedCount = posts.filter(p => p.status === 'published').length
   const scheduledCount = posts.filter(p => p.status === 'scheduled').length
@@ -196,6 +357,7 @@ export function XenaSignals() {
     { key: 'creator' as Tab, label: 'Creator', emoji: '✏️' },
     { key: 'pillars' as Tab, label: `Pillars (${pillars.length})`, emoji: '🏛️' },
     { key: 'alpha' as Tab, label: `Alpha (${signals.length})`, emoji: '⚡' },
+    { key: 'studio' as Tab, label: 'Studio', emoji: '🎨' },
   ]
 
   return (
@@ -1172,6 +1334,213 @@ export function XenaSignals() {
                   })}
                 </div>
               )}
+            </div>
+          )}
+          {/* ─── STUDIO TAB ─── */}
+          {tab === 'studio' && (
+            <div className="space-y-4">
+              {/* Hidden file input */}
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+
+              <div className="flex flex-col lg:flex-row gap-4">
+                {/* Left: Canvas area (2/3) */}
+                <div className="lg:w-2/3 space-y-3">
+                  {/* Toolbar */}
+                  <div
+                    className="flex flex-wrap gap-2 p-3 rounded-2xl"
+                    style={{ background: '#1e1e30', border: '1px solid #2e2e45' }}
+                  >
+                    <button
+                      onClick={deleteSelected}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:scale-105"
+                      style={{ border: '1px solid #ef444440', color: '#f87171', background: '#2d0a0a' }}
+                    >
+                      Delete Selected
+                    </button>
+                    <button
+                      onClick={clearCanvas}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all hover:scale-105"
+                      style={{ border: '1px solid #2e2e45', color: '#9090B0', background: '#1e1e30' }}
+                    >
+                      Clear Canvas
+                    </button>
+                    <button
+                      onClick={exportCanvas}
+                      className="px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all hover:scale-105 ml-auto"
+                      style={{
+                        background: 'linear-gradient(to right, #7B2FBE, #00C4CC)',
+                        boxShadow: '0 2px 12px rgba(123,47,190,0.45)',
+                      }}
+                    >
+                      Export PNG ↓
+                    </button>
+                  </div>
+
+                  {/* Canvas container */}
+                  <div
+                    className="rounded-2xl overflow-auto"
+                    style={{
+                      background: '#111120',
+                      border: '1px solid #2e2e45',
+                      boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+                      maxHeight: '70vh',
+                    }}
+                  >
+                    <div className="p-3 flex justify-center">
+                      <canvas ref={canvasRef} style={{ borderRadius: 8, boxShadow: '0 4px 24px rgba(0,0,0,0.5)' }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Tools panel (1/3) */}
+                <div className="lg:w-1/3 space-y-3">
+                  {/* Canvas Size */}
+                  <div
+                    className="rounded-2xl p-4"
+                    style={{ background: '#1e1e30', border: '1px solid #2e2e45' }}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#9090B0' }}>
+                      Canvas Size
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {CANVAS_SIZES.map(size => (
+                        <button
+                          key={size.name}
+                          onClick={() => resizeCanvas(size.w, size.h)}
+                          className="px-2.5 py-1 rounded-lg text-xs transition-all hover:scale-105"
+                          style={{ border: '1px solid #7B2FBE50', color: '#a78bfa', background: '#7B2FBE15' }}
+                        >
+                          {size.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Templates */}
+                  <div
+                    className="rounded-2xl p-4"
+                    style={{ background: '#1e1e30', border: '1px solid #2e2e45' }}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#9090B0' }}>
+                      Background Templates
+                    </div>
+                    <div className="space-y-2">
+                      {TEMPLATES.map(tpl => (
+                        <button
+                          key={tpl.name}
+                          onClick={() => applyTemplate(tpl.gradient)}
+                          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl transition-all hover:scale-[1.02]"
+                          style={{ border: '1px solid #2e2e45', background: '#232336' }}
+                        >
+                          <div
+                            className="w-10 h-5 rounded-md flex-shrink-0"
+                            style={{ background: `linear-gradient(to right, ${tpl.gradient[0]}, ${tpl.gradient[1]})` }}
+                          />
+                          <span className="text-xs" style={{ color: '#F0F0FF' }}>{tpl.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Add Text */}
+                  <div
+                    className="rounded-2xl p-4"
+                    style={{ background: '#1e1e30', border: '1px solid #2e2e45' }}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#9090B0' }}>
+                      Add Text
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['title', 'subtitle', 'meme-top', 'meme-bottom', 'body'] as const).map(style => (
+                        <button
+                          key={style}
+                          onClick={() => addText(style)}
+                          className="px-2 py-2 rounded-xl text-xs font-semibold transition-all hover:scale-105 capitalize"
+                          style={{ border: '1px solid #7B2FBE50', color: '#a78bfa', background: 'transparent' }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#7B2FBE20' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+                        >
+                          {style.replace('-', ' ')}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Add Shapes */}
+                  <div
+                    className="rounded-2xl p-4"
+                    style={{ background: '#1e1e30', border: '1px solid #2e2e45' }}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#9090B0' }}>
+                      Shapes
+                    </div>
+                    <div className="flex gap-2">
+                      {(['rect', 'circle', 'triangle'] as const).map(shape => (
+                        <button
+                          key={shape}
+                          onClick={() => addShape(shape)}
+                          className="flex-1 py-2 rounded-xl text-xs font-semibold transition-all hover:scale-105 capitalize"
+                          style={{ border: '1px solid #7B2FBE50', color: '#a78bfa', background: 'transparent' }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#7B2FBE20' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+                        >
+                          {shape === 'rect' ? '▭' : shape === 'circle' ? '●' : '▲'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Upload Image */}
+                  <div
+                    className="rounded-2xl p-4"
+                    style={{ background: '#1e1e30', border: '1px solid #2e2e45' }}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#9090B0' }}>
+                      Upload Image
+                    </div>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full py-2.5 rounded-xl text-xs font-semibold transition-all hover:scale-105"
+                      style={{ border: '1px dashed #7B2FBE60', color: '#a78bfa', background: '#7B2FBE10' }}
+                    >
+                      + Upload Image
+                    </button>
+                  </div>
+
+                  {/* Quick Meme Presets */}
+                  <div
+                    className="rounded-2xl p-4"
+                    style={{ background: '#1e1e30', border: '1px solid #2e2e45' }}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#9090B0' }}>
+                      Quick Presets
+                    </div>
+                    <div className="space-y-2">
+                      {MEME_PRESETS.map(preset => (
+                        <button
+                          key={preset.name}
+                          onClick={preset.action}
+                          className="w-full py-2.5 rounded-xl text-xs font-semibold text-white transition-all hover:scale-[1.02]"
+                          style={{
+                            background: 'linear-gradient(to right, #7B2FBE30, #00C4CC20)',
+                            border: '1px solid #7B2FBE40',
+                          }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'linear-gradient(to right, #7B2FBE50, #00C4CC40)' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'linear-gradient(to right, #7B2FBE30, #00C4CC20)' }}
+                        >
+                          {preset.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </>

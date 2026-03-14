@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { lifeos, ovb } from '../lib/supabase'
 import { AGENTS } from '../types'
 import type { HarnessTask, XenaAlphaSignal, Estimate } from '../types'
 import { CheckSquare, DollarSign, Zap, Clock, Wrench, Target, BarChart2 } from 'lucide-react'
+
+const AGENT_ROUTES: Record<string, string> = {
+  Ralph: '/ralph',
+  Bob: '/bob',
+  GEOFF: '/geoff',
+  Xena: '/xena',
+}
 
 function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr)
@@ -189,10 +197,16 @@ export function Dashboard() {
             const cfg = AGENT_CONFIG[agent.name as keyof typeof AGENT_CONFIG]
             const taskCount = tasksByAgent[agent.name] || 0
             const isActive = agent.name !== 'Ralph'
+            const route = AGENT_ROUTES[agent.name] || '/'
             return (
-              <div
+              <Link
                 key={agent.name}
-                className="rounded-xl p-4 transition-all duration-150 cursor-default"
+                to={route}
+                className="block hover:scale-[1.02] transition-transform"
+                style={{ textDecoration: 'none' }}
+              >
+              <div
+                className="rounded-xl p-4 transition-all duration-150 cursor-pointer"
                 style={{
                   background: cfg.bg,
                   border: `1px solid ${cfg.border}`,
@@ -312,6 +326,7 @@ export function Dashboard() {
                   </div>
                 )}
               </div>
+              </Link>
             )
           })}
         </div>
