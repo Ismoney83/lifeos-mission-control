@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
 import { lifeos } from '../lib/supabase'
 import type { GeoffPosition, XenaAlphaSignal, Trade, GeoffPMTrade } from '../types'
-import { StatCard } from '../components/StatCard'
 import { GeoffChart } from '../components/GeoffChart'
 import {
-  TrendingUp, Activity, BarChart2, Zap, CheckCircle, XCircle,
+  Activity, BarChart2, Zap, CheckCircle, XCircle,
   Terminal, Send, ExternalLink, RefreshCw, AlertTriangle,
-  DollarSign, Target, BookOpen
+  Target, BookOpen
 } from 'lucide-react'
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart,
@@ -27,28 +26,33 @@ interface BacktestResult {
   created_at: string
 }
 
-function signalBadge(strength: string) {
+function scoreColor(score: number | null) {
+  if (score == null) return 'text-gray-500 bg-gray-800 border-gray-700'
+  if (score >= 75) return 'text-[#22ff88] bg-[#22ff88]/10 border-[#22ff88]/30'
+  if (score >= 60) return 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+  return 'text-red-400 bg-red-500/10 border-red-500/30'
+}
+
+function strengthColor(strength: string) {
   switch (strength?.toUpperCase()) {
-    case 'STRONG': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
-    case 'MEDIUM': return 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30'
+    case 'STRONG': return 'text-[#22ff88] bg-[#22ff88]/10 border-[#22ff88]/30'
+    case 'MEDIUM': return 'text-amber-400 bg-amber-500/10 border-amber-500/30'
     case 'WEAK': return 'text-red-400 bg-red-500/10 border-red-500/30'
-    default: return 'text-gray-400 bg-gray-500/10 border-gray-500/30'
+    default: return 'text-gray-500 bg-gray-800 border-gray-700'
   }
 }
 
-function actionBadge(action: string | null) {
+function actionColor(action: string | null) {
   switch (action?.toUpperCase()) {
-    case 'APPROVED': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+    case 'APPROVED': return 'text-[#22ff88] bg-[#22ff88]/10 border-[#22ff88]/30'
     case 'REJECTED': return 'text-red-400 bg-red-500/10 border-red-500/30'
-    case 'WATCHING': return 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30'
-    default: return 'text-gray-500 bg-gray-700/20 border-gray-700/30'
+    case 'WATCHING': return 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+    default: return 'text-gray-600 bg-gray-800/50 border-gray-700/50'
   }
 }
 
-function fmtDate(d: string) {
-  return new Date(d).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-  })
+function fmtTime(d: string) {
+  return new Date(d).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
 
 const QUICK_COMMANDS = [
@@ -103,14 +107,13 @@ export function GeoffTrading() {
 
   async function approveSignal(sig: XenaAlphaSignal, action: 'APPROVED' | 'REJECTED' | 'WATCHING') {
     setActioningId(sig.id)
-    const { error } = await lifeos
+    const { error: updateErr } = await lifeos
       .from('xena_alpha_signals')
       .update({ geoff_action: action, geoff_reviewed: true })
       .eq('id', sig.id)
-    if (!error) {
+    if (!updateErr) {
       setSignals(prev => prev.map(s => s.id === sig.id ? { ...s, geoff_action: action, geoff_reviewed: true } : s))
       if (action === 'APPROVED') {
-        // Also create a harness task for GEOFF to act on
         await lifeos.from('harness_tasks').insert({
           task_id: `GEOFF-TRADE-${Date.now()}`,
           title: `Trade signal: ${sig.token_symbol} (${sig.signal_strength})`,
@@ -129,7 +132,7 @@ export function GeoffTrading() {
     if (!command.trim()) return
     setCmdSending(true)
     const cmd = command.trim()
-    const { error } = await lifeos.from('harness_tasks').insert({
+    const { error: cmdErr } = await lifeos.from('harness_tasks').insert({
       task_id: `GEOFF-CMD-${Date.now()}`,
       title: cmd,
       description: `Manual command from Mission Control dashboard`,
@@ -139,19 +142,18 @@ export function GeoffTrading() {
       priority: 'high',
       source: 'mission_control',
     })
-    setCmdLog(prev => [{ ts: new Date().toLocaleTimeString(), cmd, ok: !error }, ...prev.slice(0, 9)])
-    if (!error) setCommand('')
+    setCmdLog(prev => [{ ts: new Date().toLocaleTimeString(), cmd, ok: !cmdErr }, ...prev.slice(0, 9)])
+    if (!cmdErr) setCommand('')
     setCmdSending(false)
   }
 
   const totalPnl = [...trades, ...pmTrades].reduce((s, t) => s + (t.pnl || 0), 0)
   const wins = [...trades, ...pmTrades].filter(t => (t.pnl || 0) > 0).length
   const total = trades.length + pmTrades.length
-  const winRate = total > 0 ? (wins / total * 100).toFixed(0) : '—'
+  const winRate = total > 0 ? Math.round(wins / total * 100) : null
   const strongSignals = signals.filter(s => s.signal_strength?.toUpperCase() === 'STRONG').length
   const pendingSignals = signals.filter(s => !s.geoff_reviewed).length
 
-  // Build PnL chart data from trades
   const pnlData = [...trades].reverse().reduce((acc: { date: string; cumPnl: number }[], t) => {
     const prev = acc[acc.length - 1]?.cumPnl || 0
     acc.push({
@@ -162,75 +164,196 @@ export function GeoffTrading() {
   }, [])
 
   const tabs: { key: Tab; label: string; badge?: number }[] = [
-    { key: 'chart', label: '📈 Chart' },
-    { key: 'overview', label: 'Overview' },
-    { key: 'strategies', label: '🎯 Strategies' },
-    { key: 'positions', label: 'Positions', badge: positions.length },
-    { key: 'signals', label: 'Signals', badge: pendingSignals || undefined },
-    { key: 'history', label: 'History', badge: undefined },
-    { key: 'control', label: 'Control' },
+    { key: 'chart', label: 'CHART' },
+    { key: 'overview', label: 'OVERVIEW' },
+    { key: 'strategies', label: 'STRATEGIES' },
+    { key: 'positions', label: 'POSITIONS', badge: positions.length },
+    { key: 'signals', label: 'SIGNALS', badge: pendingSignals || undefined },
+    { key: 'history', label: 'HISTORY' },
+    { key: 'control', label: 'CONTROL' },
   ]
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex items-center gap-3 text-gray-400">
-          <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-          Loading GEOFF data...
+      <div className="flex items-center justify-center h-64" style={{ background: '#0a0b0d' }}>
+        <div className="flex items-center gap-3" style={{ color: '#64748b' }}>
+          <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#22ff88', borderTopColor: 'transparent' }} />
+          <span className="font-mono text-sm">Loading GEOFF data...</span>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="p-6 space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col" style={{ background: '#0a0b0d', minHeight: '100%' }}>
+
+      {/* ── Axiom-style Header Bar ── */}
+      <div
+        className="flex items-center justify-between px-5 py-3 border-b"
+        style={{ background: '#111318', borderColor: '#2a2d35' }}
+      >
+        {/* Left: Logo + name */}
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-            <span className="text-xl">📈</span>
+          <div
+            className="flex items-center justify-center w-8 h-8 rounded-lg font-mono font-bold text-sm"
+            style={{ background: 'rgba(34,255,136,0.1)', border: '1px solid rgba(34,255,136,0.25)', color: '#22ff88' }}
+          >
+            G
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-white">GEOFF Trading</h2>
-            <p className="text-gray-500 text-sm">Finance & Prediction Markets Control Center</p>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-white text-sm tracking-wide">GEOFF</span>
+              <span style={{ color: '#64748b', fontSize: '11px' }}>Trading Terminal</span>
+              {/* Live badge */}
+              <span
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+                style={{ background: 'rgba(34,255,136,0.08)', border: '1px solid rgba(34,255,136,0.2)', color: '#22ff88' }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: '#22ff88' }} />
+                LIVE
+              </span>
+            </div>
           </div>
         </div>
-        <button
-          onClick={load}
-          className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-400 text-xs transition-colors"
-        >
-          <RefreshCw className="w-3.5 h-3.5" /> Refresh
-        </button>
+
+        {/* Right: Live stat chips */}
+        <div className="flex items-center gap-2">
+          {/* Total PnL chip */}
+          <div
+            className="px-3 py-1 rounded font-mono text-xs font-bold"
+            style={{
+              background: totalPnl >= 0 ? 'rgba(34,255,136,0.08)' : 'rgba(255,51,102,0.08)',
+              border: `1px solid ${totalPnl >= 0 ? 'rgba(34,255,136,0.2)' : 'rgba(255,51,102,0.2)'}`,
+              color: totalPnl >= 0 ? '#22ff88' : '#ff3366',
+              boxShadow: totalPnl >= 0 ? '0 0 12px rgba(34,255,136,0.1)' : '0 0 12px rgba(255,51,102,0.1)',
+            }}
+          >
+            {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+          </div>
+          {/* Positions chip */}
+          <div
+            className="px-2.5 py-1 rounded font-mono text-xs"
+            style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)', color: '#60a5fa' }}
+          >
+            {positions.length} pos
+          </div>
+          {/* Win rate chip */}
+          {winRate !== null && (
+            <div
+              className="px-2.5 py-1 rounded font-mono text-xs font-bold"
+              style={{
+                background: winRate >= 60 ? 'rgba(34,255,136,0.08)' : winRate >= 40 ? 'rgba(245,158,11,0.08)' : 'rgba(255,51,102,0.08)',
+                border: `1px solid ${winRate >= 60 ? 'rgba(34,255,136,0.2)' : winRate >= 40 ? 'rgba(245,158,11,0.2)' : 'rgba(255,51,102,0.2)'}`,
+                color: winRate >= 60 ? '#22ff88' : winRate >= 40 ? '#f59e0b' : '#ff3366',
+              }}
+            >
+              {winRate}% WR
+            </div>
+          )}
+          <button
+            onClick={load}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors"
+            style={{ background: '#1a1d24', border: '1px solid #2a2d35', color: '#64748b' }}
+          >
+            <RefreshCw className="w-3 h-3" /> Refresh
+          </button>
+        </div>
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm">{error}</div>
+        <div className="mx-5 mt-3 px-4 py-2.5 rounded text-xs font-mono" style={{ background: 'rgba(255,51,102,0.08)', border: '1px solid rgba(255,51,102,0.25)', color: '#ff3366' }}>
+          {error}
+        </div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
-        <StatCard label="Open Positions" value={positions.length} icon={<Activity className="w-5 h-5" />} color="text-emerald-400" />
-        <StatCard label="Total PnL" value={`$${totalPnl.toFixed(2)}`} icon={<DollarSign className="w-5 h-5" />} color={totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-        <StatCard label="Win Rate" value={`${winRate}%`} icon={<Target className="w-5 h-5" />} color="text-blue-400" />
-        <StatCard label="Pending Signals" value={pendingSignals} icon={<Zap className="w-5 h-5" />} color="text-yellow-400" />
-        <StatCard label="Strong Signals" value={strongSignals} icon={<TrendingUp className="w-5 h-5" />} color="text-pink-400" />
+      {/* ── Axiom Stats Row ── */}
+      <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 px-5 pt-4 pb-1">
+        {[
+          {
+            label: 'Open Positions',
+            value: positions.length,
+            mono: true,
+            accent: '#60a5fa',
+            icon: <Activity className="w-3.5 h-3.5" />,
+          },
+          {
+            label: 'Total PnL',
+            value: `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`,
+            mono: true,
+            accent: totalPnl >= 0 ? '#22ff88' : '#ff3366',
+            glow: totalPnl >= 0 ? '0 0 12px rgba(34,255,136,0.15)' : '0 0 12px rgba(255,51,102,0.15)',
+            icon: null,
+          },
+          {
+            label: 'Win Rate',
+            value: winRate !== null ? `${winRate}%` : '—',
+            mono: true,
+            accent: winRate === null ? '#64748b' : winRate >= 60 ? '#22ff88' : winRate >= 40 ? '#f59e0b' : '#ff3366',
+            icon: <Target className="w-3.5 h-3.5" />,
+          },
+          {
+            label: 'Pending Signals',
+            value: pendingSignals,
+            mono: true,
+            accent: '#f59e0b',
+            icon: <Zap className="w-3.5 h-3.5" />,
+          },
+          {
+            label: 'Strong Signals',
+            value: strongSignals,
+            mono: true,
+            accent: '#22ff88',
+            glow: '0 0 12px rgba(34,255,136,0.1)',
+            icon: null,
+          },
+        ].map(({ label, value, mono, accent, glow, icon }) => (
+          <div
+            key={label}
+            className="rounded-lg p-3"
+            style={{
+              background: '#111318',
+              borderTop: `2px solid ${accent}`,
+              border: `1px solid #2a2d35`,
+              borderTopColor: accent,
+              boxShadow: glow,
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] uppercase tracking-wider" style={{ color: '#64748b' }}>{label}</span>
+              {icon && <span style={{ color: accent }}>{icon}</span>}
+            </div>
+            <div
+              className={`text-xl font-bold ${mono ? 'font-mono' : ''}`}
+              style={{ color: accent }}
+            >
+              {value}
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* Tab Bar */}
-      <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1">
+      {/* ── Axiom Tab Bar ── */}
+      <div
+        className="flex items-center gap-0 px-5 pt-4 border-b"
+        style={{ borderColor: '#2a2d35' }}
+      >
         {tabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
-              tab === t.key
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                : 'text-gray-500 hover:text-gray-300'
-            }`}
+            className="relative flex items-center gap-1.5 px-4 py-2.5 text-[11px] font-mono font-medium tracking-wider transition-colors"
+            style={{
+              color: tab === t.key ? '#e2e8f0' : '#64748b',
+              borderBottom: tab === t.key ? '2px solid #22ff88' : '2px solid transparent',
+              marginBottom: '-1px',
+            }}
           >
             {t.label}
             {t.badge !== undefined && t.badge > 0 && (
-              <span className="bg-yellow-500 text-black text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">
+              <span
+                className="flex items-center justify-center text-[9px] font-bold rounded-full w-4 h-4"
+                style={{ background: '#22ff88', color: '#0a0b0d' }}
+              >
                 {t.badge}
               </span>
             )}
@@ -238,201 +361,164 @@ export function GeoffTrading() {
         ))}
       </div>
 
-      {/* CHART TAB */}
-      {tab === 'chart' && (
-        <div className="-mx-6 -mt-5">
-          <GeoffChart />
-        </div>
-      )}
+      {/* ── Tab Content ── */}
+      <div className="flex-1 p-5">
 
-      {/* OVERVIEW TAB */}
-      {tab === 'overview' && (
-        <div className="space-y-5">
-          {/* PnL Chart */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-white font-semibold">Cumulative PnL</h3>
-              <span className={`text-lg font-bold ${totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                ${totalPnl.toFixed(2)}
-              </span>
-            </div>
-            {pnlData.length > 1 ? (
-              <ResponsiveContainer width="100%" height={180}>
-                <AreaChart data={pnlData}>
-                  <defs>
-                    <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={totalPnl >= 0 ? '#10B981' : '#EF4444'} stopOpacity={0.3} />
-                      <stop offset="95%" stopColor={totalPnl >= 0 ? '#10B981' : '#EF4444'} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="date" tick={{ fill: '#6B7280', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#6B7280', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
-                  <Tooltip
-                    contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
-                    labelStyle={{ color: '#9CA3AF' }}
-                    formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Cumulative PnL']}
-                  />
-                  <ReferenceLine y={0} stroke="#374151" strokeDasharray="3 3" />
-                  <Area type="monotone" dataKey="cumPnl" stroke={totalPnl >= 0 ? '#10B981' : '#EF4444'} fill="url(#pnlGrad)" strokeWidth={2} dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-[180px] flex items-center justify-center">
-                <div className="text-center">
-                  <BarChart2 className="w-10 h-10 text-gray-700 mx-auto mb-2" />
-                  <p className="text-gray-500 text-sm">No trade history yet</p>
-                  <p className="text-gray-600 text-xs">Chart will populate as GEOFF trades</p>
+        {/* CHART TAB */}
+        {tab === 'chart' && (
+          <div className="-mx-5 -mt-5">
+            <GeoffChart />
+          </div>
+        )}
+
+        {/* OVERVIEW TAB */}
+        {tab === 'overview' && (
+          <div className="space-y-4">
+            {/* PnL Area Chart */}
+            <div
+              className="rounded-lg p-4"
+              style={{ background: '#111318', border: '1px solid #2a2d35' }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider font-mono mb-1" style={{ color: '#64748b' }}>Cumulative PnL</div>
+                  <div
+                    className="text-2xl font-bold font-mono"
+                    style={{ color: totalPnl >= 0 ? '#22ff88' : '#ff3366', textShadow: totalPnl >= 0 ? '0 0 16px rgba(34,255,136,0.4)' : '0 0 16px rgba(255,51,102,0.4)' }}
+                  >
+                    {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] font-mono" style={{ color: '#64748b' }}>
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: '#22ff88' }} />
+                  LIVE
                 </div>
               </div>
-            )}
-          </div>
-
-          {/* Recent Signals */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-              <h3 className="text-white font-semibold">Recent Alpha Signals</h3>
-              <button onClick={() => setTab('signals')} className="text-xs text-emerald-400 hover:underline">
-                View all →
-              </button>
+              {pnlData.length > 1 ? (
+                <ResponsiveContainer width="100%" height={160}>
+                  <AreaChart data={pnlData}>
+                    <defs>
+                      <linearGradient id="pnlGradAxiom" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={totalPnl >= 0 ? '#22ff88' : '#ff3366'} stopOpacity={0.2} />
+                        <stop offset="95%" stopColor={totalPnl >= 0 ? '#22ff88' : '#ff3366'} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
+                    <Tooltip
+                      contentStyle={{ background: '#111318', border: '1px solid #2a2d35', borderRadius: '6px', fontSize: '12px' }}
+                      labelStyle={{ color: '#94a3b8', fontFamily: 'monospace' }}
+                      itemStyle={{ fontFamily: 'monospace' }}
+                      formatter={(v: unknown) => [`$${Number(v).toFixed(2)}`, 'Cumulative PnL']}
+                    />
+                    <ReferenceLine y={0} stroke="#2a2d35" strokeDasharray="3 3" />
+                    <Area
+                      type="monotone"
+                      dataKey="cumPnl"
+                      stroke={totalPnl >= 0 ? '#22ff88' : '#ff3366'}
+                      fill="url(#pnlGradAxiom)"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-[160px] flex items-center justify-center">
+                  <div className="text-center">
+                    <BarChart2 className="w-8 h-8 mx-auto mb-2" style={{ color: '#2a2d35' }} />
+                    <p className="text-xs font-mono" style={{ color: '#64748b' }}>No trade history yet</p>
+                  </div>
+                </div>
+              )}
             </div>
-            {signals.slice(0, 5).map(sig => (
-              <SignalRow key={sig.id} sig={sig} onAction={approveSignal} actioning={actioningId === sig.id} compact />
-            ))}
-            {signals.length === 0 && (
-              <div className="p-8 text-center text-gray-500 text-sm">No signals yet</div>
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* POSITIONS TAB */}
-      {tab === 'positions' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-800">
-            <h3 className="text-white font-semibold">Open Positions</h3>
-            <p className="text-gray-500 text-xs mt-0.5">Live positions tracked by GEOFF</p>
-          </div>
-          {positions.length === 0 ? (
-            <div className="p-16 text-center">
-              <Activity className="w-12 h-12 text-gray-700 mx-auto mb-3" />
-              <p className="text-gray-400 font-medium">No open positions</p>
-              <p className="text-gray-600 text-xs mt-1">GEOFF's active trades will appear here</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-gray-800">
-                    {['Symbol', 'Side', 'Size', 'Entry', 'Current', 'PnL', 'Status'].map(h => (
-                      <th key={h} className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {positions.map(pos => (
-                    <tr key={pos.id} className="hover:bg-gray-800/30 transition-colors">
-                      <td className="px-5 py-4 text-white font-bold text-sm">{pos.symbol || '—'}</td>
-                      <td className="px-5 py-4">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                          pos.side?.toLowerCase() === 'long' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
-                        }`}>{pos.side || '—'}</span>
-                      </td>
-                      <td className="px-5 py-4 text-gray-300 text-sm">{pos.size ?? '—'}</td>
-                      <td className="px-5 py-4 text-gray-300 text-sm">
-                        {pos.entry_price != null ? `$${pos.entry_price.toLocaleString()}` : '—'}
-                      </td>
-                      <td className="px-5 py-4 text-gray-300 text-sm">
-                        {pos.current_price != null ? `$${pos.current_price.toLocaleString()}` : '—'}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className={`font-bold text-sm ${(pos.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {pos.pnl != null ? `$${pos.pnl.toFixed(2)}` : '—'}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-gray-400 text-sm">{pos.status || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* SIGNALS TAB */}
-      {tab === 'signals' && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-gray-400">{pendingSignals} signals awaiting review</span>
-            <span className="text-gray-600">·</span>
-            <span className="text-gray-400">{signals.filter(s => s.geoff_action === 'APPROVED').length} approved</span>
-          </div>
-          {signals.length === 0 ? (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-16 text-center">
-              <Zap className="w-12 h-12 text-gray-700 mx-auto mb-3" />
-              <p className="text-gray-400 font-medium">No signals yet</p>
-            </div>
-          ) : signals.map(sig => (
-            <SignalRow key={sig.id} sig={sig} onAction={approveSignal} actioning={actioningId === sig.id} />
-          ))}
-        </div>
-      )}
-
-      {/* HISTORY TAB */}
-      {tab === 'history' && (
-        <div className="space-y-4">
-          {/* Trade History Table */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-              <div>
-                <h3 className="text-white font-semibold">Trade History</h3>
-                <p className="text-gray-500 text-xs mt-0.5">{trades.length + pmTrades.length} total trades</p>
+            {/* Recent Signals — Axiom dense rows */}
+            <div className="rounded-lg overflow-hidden" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+              <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: '#2a2d35' }}>
+                <span className="text-xs font-mono font-semibold" style={{ color: '#e2e8f0' }}>Recent Alpha Signals</span>
+                <button
+                  onClick={() => setTab('signals')}
+                  className="text-[10px] font-mono transition-colors hover:underline"
+                  style={{ color: '#22ff88' }}
+                >
+                  View all →
+                </button>
               </div>
-              <div className="flex items-center gap-3">
-                <span className={`text-sm font-bold ${totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} total
-                </span>
-              </div>
+              {signals.length === 0 ? (
+                <div className="p-8 text-center text-xs font-mono" style={{ color: '#64748b' }}>No signals yet</div>
+              ) : signals.slice(0, 5).map((sig, idx) => (
+                <AxiomSignalRow key={sig.id} sig={sig} rank={idx + 1} onAction={approveSignal} actioning={actioningId === sig.id} compact />
+              ))}
             </div>
-            {trades.length === 0 && pmTrades.length === 0 ? (
+          </div>
+        )}
+
+        {/* POSITIONS TAB */}
+        {tab === 'positions' && (
+          <div className="rounded-lg overflow-hidden" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+            <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: '#2a2d35' }}>
+              <span className="text-xs font-mono font-semibold" style={{ color: '#e2e8f0' }}>Open Positions</span>
+              <span className="text-[10px] font-mono" style={{ color: '#64748b' }}>Live positions tracked by GEOFF</span>
+            </div>
+            {positions.length === 0 ? (
               <div className="p-16 text-center">
-                <BarChart2 className="w-12 h-12 text-gray-700 mx-auto mb-3" />
-                <p className="text-gray-400 font-medium">No trade history</p>
-                <p className="text-gray-600 text-xs mt-1">Completed trades will appear here</p>
+                <Activity className="w-10 h-10 mx-auto mb-3" style={{ color: '#2a2d35' }} />
+                <p className="text-xs font-mono" style={{ color: '#64748b' }}>No open positions</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-gray-800">
-                      {['Symbol / Market', 'Side', 'Size', 'Price', 'PnL', 'Date'].map(h => (
-                        <th key={h} className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{h}</th>
+                    <tr style={{ borderBottom: '1px solid #2a2d35' }}>
+                      {['Symbol', 'Side', 'Size', 'Entry', 'Current', 'PnL', 'Status'].map(h => (
+                        <th
+                          key={h}
+                          className="px-4 py-2.5 text-left text-[10px] font-mono uppercase tracking-wider"
+                          style={{ color: '#64748b' }}
+                        >
+                          {h}
+                        </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-800">
-                    {[...trades.map(t => ({ ...t, _type: 'trade' })), ...pmTrades.map(t => ({ ...t, _type: 'pm', symbol: t.market_title }))].map(t => (
-                      <tr key={t.id} className="hover:bg-gray-800/30 transition-colors">
-                        <td className="px-5 py-4">
-                          <div className="text-white font-semibold text-sm truncate max-w-[200px]">{t.symbol || '—'}</div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className={`text-xs px-2 py-0.5 rounded ${
-                            t.side?.toLowerCase() === 'yes' || t.side?.toLowerCase() === 'long'
-                              ? 'bg-emerald-500/10 text-emerald-400'
-                              : 'bg-red-500/10 text-red-400'
-                          }`}>{t.side || '—'}</span>
-                        </td>
-                        <td className="px-5 py-4 text-gray-300 text-sm">{'size' in t ? t.size ?? '—' : 'contracts' in t ? (t as GeoffPMTrade).contracts ?? '—' : '—'}</td>
-                        <td className="px-5 py-4 text-gray-300 text-sm">
-                          {'price' in t && t.price != null ? `$${Number(t.price).toLocaleString()}` : 'avg_price' in t && (t as GeoffPMTrade).avg_price != null ? `${(t as GeoffPMTrade).avg_price}¢` : '—'}
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className={`font-bold text-sm ${(t.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}` : '—'}
+                  <tbody>
+                    {positions.map(pos => (
+                      <tr
+                        key={pos.id}
+                        className="transition-colors"
+                        style={{ borderBottom: '1px solid rgba(42,45,53,0.5)', height: '40px' }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#1a1d24')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <td className="px-4 py-0 font-mono font-bold text-xs" style={{ color: '#e2e8f0' }}>{pos.symbol || '—'}</td>
+                        <td className="px-4 py-0">
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-mono font-medium uppercase"
+                            style={{
+                              background: pos.side?.toLowerCase() === 'long' ? 'rgba(34,255,136,0.1)' : 'rgba(255,51,102,0.1)',
+                              color: pos.side?.toLowerCase() === 'long' ? '#22ff88' : '#ff3366',
+                              border: `1px solid ${pos.side?.toLowerCase() === 'long' ? 'rgba(34,255,136,0.25)' : 'rgba(255,51,102,0.25)'}`,
+                            }}
+                          >
+                            {pos.side || '—'}
                           </span>
                         </td>
-                        <td className="px-5 py-4 text-gray-500 text-xs">{fmtDate(t.created_at)}</td>
+                        <td className="px-4 py-0 font-mono text-xs" style={{ color: '#94a3b8' }}>{pos.size ?? '—'}</td>
+                        <td className="px-4 py-0 font-mono text-xs text-right" style={{ color: '#94a3b8' }}>
+                          {pos.entry_price != null ? `$${pos.entry_price.toLocaleString()}` : '—'}
+                        </td>
+                        <td className="px-4 py-0 font-mono text-xs text-right" style={{ color: '#94a3b8' }}>
+                          {pos.current_price != null ? `$${pos.current_price.toLocaleString()}` : '—'}
+                        </td>
+                        <td className="px-4 py-0">
+                          <span
+                            className="font-mono font-bold text-xs"
+                            style={{ color: (pos.pnl || 0) >= 0 ? '#22ff88' : '#ff3366' }}
+                          >
+                            {pos.pnl != null ? `${pos.pnl >= 0 ? '+' : ''}$${pos.pnl.toFixed(2)}` : '—'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-0 font-mono text-[10px]" style={{ color: '#64748b' }}>{pos.status || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -440,361 +526,640 @@ export function GeoffTrading() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* STRATEGIES TAB */}
-      {tab === 'strategies' && (
-        <div className="space-y-6">
-          {/* Backtest Win Rate Chart */}
-          {backtest.length > 0 ? (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <BarChart2 className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-white font-semibold">Strategy Win Rates (Backtested)</h3>
-                <span className="text-gray-500 text-xs ml-auto">1m candles · 12.5× leverage</span>
-              </div>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart
-                  data={backtest.map(b => ({
-                    name: b.strategy_name.replace(/_/g, ' ').replace('bull flag', '🚩').replace('first green', '🟢').slice(0, 20),
-                    winRate: parseFloat((b.win_rate || 0).toFixed(1)),
-                    trades: b.total_trades,
-                  }))}
-                  layout="vertical"
-                  margin={{ left: 10, right: 50 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 10 }}
-                    tickLine={false} tickFormatter={v => `${v}%`} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#d1d5db', fontSize: 11 }}
-                    width={140} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
-                    formatter={(v: unknown) => [`${v}%`, 'Win Rate']}
-                  />
-                  <ReferenceLine x={50} stroke="#374151" strokeDasharray="4 4" />
-                  <Bar dataKey="winRate" radius={[0, 4, 4, 0]}
-                    label={{ position: 'right', fill: '#9ca3af', fontSize: 10, formatter: (v: unknown) => `${v}%` }}>
-                    {backtest.map((b, i) => (
-                      <Cell key={i} fill={b.win_rate >= 60 ? '#10b981' : b.win_rate >= 50 ? '#3b82f6' : '#ef4444'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+        {/* SIGNALS TAB */}
+        {tab === 'signals' && (
+          <div className="space-y-3">
+            {/* Stats strip */}
+            <div className="flex items-center gap-4 text-[11px] font-mono" style={{ color: '#64748b' }}>
+              <span><span className="font-bold" style={{ color: '#f59e0b' }}>{pendingSignals}</span> awaiting review</span>
+              <span style={{ color: '#2a2d35' }}>·</span>
+              <span><span className="font-bold" style={{ color: '#22ff88' }}>{signals.filter(s => s.geoff_action === 'APPROVED').length}</span> approved</span>
+              <span style={{ color: '#2a2d35' }}>·</span>
+              <span><span className="font-bold" style={{ color: '#94a3b8' }}>{signals.length}</span> total</span>
             </div>
-          ) : null}
 
-          {/* Trade Count + PnL chart */}
-          {backtest.length > 0 && (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <h3 className="text-white font-semibold mb-4 text-sm">Trades Tested per Strategy</h3>
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={backtest.map(b => ({ name: b.strategy_name.replace(/_/g, ' ').slice(0, 18), trades: b.total_trades, wins: b.winning_trades }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                    <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 9 }} tickLine={false} />
-                    <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} tickLine={false} axisLine={false} />
-                    <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }} />
-                    <Bar dataKey="trades" name="Total" fill="#374151" radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="wins" name="Wins" fill="#10b981" radius={[3, 3, 0, 0]} />
+            {signals.length === 0 ? (
+              <div className="rounded-lg p-16 text-center" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+                <Zap className="w-10 h-10 mx-auto mb-3" style={{ color: '#2a2d35' }} />
+                <p className="text-xs font-mono" style={{ color: '#64748b' }}>No signals yet</p>
+              </div>
+            ) : (
+              <div className="rounded-lg overflow-hidden" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+                {/* Header row */}
+                <div
+                  className="grid gap-0 px-3 py-2 border-b text-[10px] font-mono uppercase tracking-wider"
+                  style={{ borderColor: '#2a2d35', color: '#64748b', gridTemplateColumns: '28px 80px 52px 90px 70px 60px 1fr 160px' }}
+                >
+                  <span>#</span>
+                  <span>Token</span>
+                  <span>Score</span>
+                  <span>Type</span>
+                  <span>Strength</span>
+                  <span>Chain</span>
+                  <span>Time</span>
+                  <span className="text-right">Actions</span>
+                </div>
+                {signals.map((sig, idx) => (
+                  <AxiomSignalRow key={sig.id} sig={sig} rank={idx + 1} onAction={approveSignal} actioning={actioningId === sig.id} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* HISTORY TAB */}
+        {tab === 'history' && (
+          <div className="rounded-lg overflow-hidden" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+            <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: '#2a2d35' }}>
+              <div>
+                <span className="text-xs font-mono font-semibold" style={{ color: '#e2e8f0' }}>Trade History</span>
+                <span className="ml-3 text-[10px] font-mono" style={{ color: '#64748b' }}>{trades.length + pmTrades.length} trades</span>
+              </div>
+              <span
+                className="text-sm font-bold font-mono"
+                style={{ color: totalPnl >= 0 ? '#22ff88' : '#ff3366' }}
+              >
+                {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} total
+              </span>
+            </div>
+            {trades.length === 0 && pmTrades.length === 0 ? (
+              <div className="p-16 text-center">
+                <BarChart2 className="w-10 h-10 mx-auto mb-3" style={{ color: '#2a2d35' }} />
+                <p className="text-xs font-mono" style={{ color: '#64748b' }}>No trade history</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #2a2d35' }}>
+                      {['Symbol / Market', 'Side', 'Size', 'Price', 'PnL', 'Date'].map(h => (
+                        <th key={h} className="px-4 py-2.5 text-left text-[10px] font-mono uppercase tracking-wider" style={{ color: '#64748b' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...trades.map(t => ({ ...t, _type: 'trade' })), ...pmTrades.map(t => ({ ...t, _type: 'pm', symbol: t.market_title }))].map(t => {
+                      const isWin = (t.pnl || 0) > 0
+                      return (
+                        <tr
+                          key={t.id}
+                          className="transition-colors"
+                          style={{
+                            borderBottom: '1px solid rgba(42,45,53,0.5)',
+                            height: '40px',
+                            borderLeft: `2px solid ${isWin ? 'rgba(34,255,136,0.4)' : t.pnl != null ? 'rgba(255,51,102,0.4)' : 'transparent'}`,
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.background = '#1a1d24')}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <td className="px-4 py-0">
+                            <div className="font-mono font-semibold text-xs truncate max-w-[180px]" style={{ color: '#e2e8f0' }}>{t.symbol || '—'}</div>
+                          </td>
+                          <td className="px-4 py-0">
+                            <span
+                              className="px-2 py-0.5 rounded text-[10px] font-mono uppercase"
+                              style={{
+                                background: (t.side?.toLowerCase() === 'yes' || t.side?.toLowerCase() === 'long') ? 'rgba(34,255,136,0.08)' : 'rgba(255,51,102,0.08)',
+                                color: (t.side?.toLowerCase() === 'yes' || t.side?.toLowerCase() === 'long') ? '#22ff88' : '#ff3366',
+                              }}
+                            >
+                              {t.side || '—'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-0 font-mono text-xs" style={{ color: '#94a3b8' }}>
+                            {'size' in t ? t.size ?? '—' : 'contracts' in t ? (t as GeoffPMTrade).contracts ?? '—' : '—'}
+                          </td>
+                          <td className="px-4 py-0 font-mono text-xs text-right" style={{ color: '#94a3b8' }}>
+                            {'price' in t && t.price != null
+                              ? `$${Number(t.price).toLocaleString()}`
+                              : 'avg_price' in t && (t as GeoffPMTrade).avg_price != null
+                              ? `${(t as GeoffPMTrade).avg_price}¢`
+                              : '—'}
+                          </td>
+                          <td className="px-4 py-0">
+                            <span
+                              className="font-mono font-bold text-xs"
+                              style={{ color: (t.pnl || 0) >= 0 ? '#22ff88' : '#ff3366' }}
+                            >
+                              {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}` : '—'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-0 font-mono text-[10px]" style={{ color: '#64748b' }}>{fmtTime(t.created_at)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* STRATEGIES TAB */}
+        {tab === 'strategies' && (
+          <div className="space-y-5">
+            {/* Win Rate Chart */}
+            {backtest.length > 0 && (
+              <div className="rounded-lg p-4" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+                <div className="flex items-center gap-2 mb-4">
+                  <BarChart2 className="w-4 h-4" style={{ color: '#22ff88' }} />
+                  <span className="text-xs font-mono font-semibold" style={{ color: '#e2e8f0' }}>Strategy Win Rates (Backtested)</span>
+                  <span className="text-[10px] font-mono ml-auto" style={{ color: '#64748b' }}>1m candles · 12.5× leverage</span>
+                </div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart
+                    data={backtest.map(b => ({
+                      name: b.strategy_name.replace(/_/g, ' ').slice(0, 22),
+                      winRate: parseFloat((b.win_rate || 0).toFixed(1)),
+                      trades: b.total_trades,
+                    }))}
+                    layout="vertical"
+                    margin={{ left: 10, right: 50 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1d24" horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }}
+                      tickLine={false} tickFormatter={v => `${v}%`} />
+                    <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11, fontFamily: 'monospace' }}
+                      width={145} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: '#111318', border: '1px solid #2a2d35', borderRadius: '6px', fontSize: '12px', fontFamily: 'monospace' }}
+                      formatter={(v: unknown) => [`${v}%`, 'Win Rate']}
+                    />
+                    <ReferenceLine x={50} stroke="#2a2d35" strokeDasharray="4 4" />
+                    <Bar dataKey="winRate" radius={[0, 3, 3, 0]}
+                      label={{ position: 'right', fill: '#64748b', fontSize: 10, fontFamily: 'monospace', formatter: (v: unknown) => `${v}%` }}>
+                      {backtest.map((b, i) => (
+                        <Cell
+                          key={i}
+                          fill={b.win_rate >= 60 ? '#22ff88' : b.win_rate >= 50 ? '#60a5fa' : '#ff3366'}
+                        />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            )}
 
-              {/* Win / Loss pie for top strategy */}
-              {backtest[0] && (
-                <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-white font-semibold mb-1 text-sm">Top Strategy: {backtest[0].strategy_name.replace(/_/g, ' ')}</h3>
-                  <p className="text-gray-500 text-xs mb-4">{backtest[0].verdict || 'Backtested on historical signals'}</p>
-                  <div className="flex items-center justify-center flex-1">
-                    <ResponsiveContainer width="100%" height={160}>
-                      <PieChart>
-                        <Pie
-                          data={[
-                            { name: 'Wins', value: backtest[0].winning_trades },
-                            { name: 'Losses', value: backtest[0].total_trades - backtest[0].winning_trades },
-                          ]}
-                          cx="50%" cy="50%" innerRadius={45} outerRadius={65}
-                          paddingAngle={3} dataKey="value"
-                        >
-                          <Cell fill="#10b981" />
-                          <Cell fill="#ef4444" />
-                        </Pie>
-                        <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="flex justify-center gap-6 text-xs">
-                    <div className="text-center">
-                      <p className="text-3xl font-bold text-emerald-400">{(backtest[0].win_rate || 0).toFixed(0)}%</p>
-                      <p className="text-gray-500">Win Rate</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-3xl font-bold text-blue-400">{backtest[0].total_trades}</p>
-                      <p className="text-gray-500">Trades</p>
-                    </div>
-                  </div>
+            {/* Trade count + top strategy pie */}
+            {backtest.length > 0 && (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="rounded-lg p-4" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+                  <div className="text-xs font-mono font-semibold mb-4" style={{ color: '#e2e8f0' }}>Trades Tested per Strategy</div>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={backtest.map(b => ({
+                      name: b.strategy_name.replace(/_/g, ' ').slice(0, 18),
+                      trades: b.total_trades,
+                      wins: b.winning_trades,
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1a1d24" />
+                      <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 9, fontFamily: 'monospace' }} tickLine={false} />
+                      <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} tickLine={false} axisLine={false} />
+                      <Tooltip contentStyle={{ background: '#111318', border: '1px solid #2a2d35', borderRadius: '6px', fontFamily: 'monospace', fontSize: '12px' }} />
+                      <Bar dataKey="trades" name="Total" fill="#2a2d35" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="wins" name="Wins" fill="#22ff88" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Strategy Guide Cards */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {[
-              {
-                icon: '🚩', name: 'Bull Flag', color: 'border-blue-500/30 bg-blue-500/5',
-                tagline: 'Momentum consolidation breakout',
-                explain: 'Token pumps hard (flagpole), consolidates sideways ≤1% for 3 candles (the flag), then breaks up again. We buy at the breakout.',
-                params: 'Range ≤ 1.0% · TP = 2× range · SL = consolidation low',
-                result: '72.7% WR · +9.79% avg leveraged PnL · 22 trades',
-              },
-              {
-                icon: '🟢', name: 'First Green After 3 Reds', color: 'border-emerald-500/30 bg-emerald-500/5',
-                tagline: 'Mean-reversion bounce',
-                explain: 'After 3 consecutive red candles (panic selling overshoots), the first green candle signals smart money stepping in.',
-                params: '3 reds → buy first green · TP +3% · SL -1.5%',
-                result: '57.1% WR · +10.83% avg leveraged PnL · 70 trades',
-              },
-              {
-                icon: '📉', name: 'Short Post-Pump', color: 'border-red-500/30 bg-red-500/5',
-                tagline: 'Hype-fade reversal short',
-                explain: 'After a token pumps >15% in 5 min, the hype dies and early buyers sell. We short the fade. High risk, best in bear markets.',
-                params: 'Pump >15% → short · TP = 50% of pump · SL = new high',
-                result: 'Best in bearish conditions',
-              },
-              {
-                icon: '⚡', name: 'Drift Scalper (SOL-PERP)', color: 'border-purple-500/30 bg-purple-500/5',
-                tagline: 'Leverage momentum — Drift Protocol',
-                explain: 'Reads SOL perpetual funding rate + price momentum. Enters 10× leveraged longs/shorts when both signals align. Now LIVE.',
-                params: '$2 collateral × 10x · TP +2% · SL -1% · Max 5min hold',
-                result: '🔴 LIVE — $25 USDC allocated on Drift',
-              },
-            ].map(({ icon, name, color, tagline, explain, params, result }) => (
-              <div key={name} className={`rounded-xl border p-5 ${color}`}>
-                <div className="flex items-start gap-3">
-                  <span className="text-2xl">{icon}</span>
-                  <div>
-                    <h3 className="text-white font-semibold text-sm">{name}</h3>
-                    <p className="text-gray-400 text-xs italic mb-2">{tagline}</p>
-                    <p className="text-gray-300 text-xs leading-relaxed mb-2">{explain}</p>
-                    <p className="font-mono text-gray-500 text-[11px] mb-1">{params}</p>
-                    <p className="text-emerald-400 text-[11px]">{result}</p>
+                {backtest[0] && (
+                  <div className="rounded-lg p-4 flex flex-col" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+                    <div className="text-xs font-mono font-semibold mb-0.5" style={{ color: '#e2e8f0' }}>
+                      Top: {backtest[0].strategy_name.replace(/_/g, ' ')}
+                    </div>
+                    <p className="text-[10px] font-mono mb-3" style={{ color: '#64748b' }}>{backtest[0].verdict || 'Backtested on historical signals'}</p>
+                    <div className="flex items-center justify-center flex-1">
+                      <ResponsiveContainer width="100%" height={140}>
+                        <PieChart>
+                          <Pie
+                            data={[
+                              { name: 'Wins', value: backtest[0].winning_trades },
+                              { name: 'Losses', value: backtest[0].total_trades - backtest[0].winning_trades },
+                            ]}
+                            cx="50%" cy="50%" innerRadius={40} outerRadius={58}
+                            paddingAngle={3} dataKey="value"
+                          >
+                            <Cell fill="#22ff88" />
+                            <Cell fill="#ff3366" />
+                          </Pie>
+                          <Tooltip contentStyle={{ background: '#111318', border: '1px solid #2a2d35', borderRadius: '6px', fontFamily: 'monospace', fontSize: '12px' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex justify-center gap-6 text-xs">
+                      <div className="text-center">
+                        <p className="text-2xl font-bold font-mono" style={{ color: backtest[0].win_rate >= 60 ? '#22ff88' : '#f59e0b' }}>
+                          {(backtest[0].win_rate || 0).toFixed(0)}%
+                        </p>
+                        <p className="font-mono" style={{ color: '#64748b' }}>Win Rate</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold font-mono" style={{ color: '#60a5fa' }}>{backtest[0].total_trades}</p>
+                        <p className="font-mono" style={{ color: '#64748b' }}>Trades</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
-            ))}
-          </div>
+            )}
 
-          {/* Score tiers */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <BookOpen className="w-4 h-4 text-yellow-400" />
-              <h3 className="text-white font-semibold text-sm">Signal Score Tiers</h3>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {/* Strategy guide cards — Axiom dark */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               {[
-                { range: '55–64', label: 'Watch', desc: 'Paper only', color: 'border-gray-700 text-gray-400' },
-                { range: '65–74', label: 'Moderate', desc: 'Small paper trade', color: 'border-blue-700/50 text-blue-400' },
-                { range: '75–84', label: 'High', desc: 'Active paper', color: 'border-yellow-700/50 text-yellow-400' },
-                { range: '85+',   label: 'Max', desc: 'Live candidate', color: 'border-emerald-700/50 text-emerald-400' },
-              ].map(({ range, label, desc, color }) => (
-                <div key={range} className={`rounded-lg border p-3 bg-gray-800/40 ${color}`}>
-                  <p className="font-mono text-lg font-bold">{range}</p>
-                  <p className="font-semibold text-xs mt-0.5">{label}</p>
-                  <p className="text-gray-600 text-xs">{desc}</p>
+                {
+                  icon: '🚩', name: 'Bull Flag',
+                  accentColor: '#60a5fa',
+                  tagline: 'Momentum consolidation breakout',
+                  explain: 'Token pumps hard (flagpole), consolidates sideways ≤1% for 3 candles (the flag), then breaks up again. We buy at the breakout.',
+                  params: 'Range ≤ 1.0% · TP = 2× range · SL = consolidation low',
+                  result: '72.7% WR · +9.79% avg leveraged PnL · 22 trades',
+                  isHigh: true,
+                },
+                {
+                  icon: '🟢', name: 'First Green After 3 Reds',
+                  accentColor: '#22ff88',
+                  tagline: 'Mean-reversion bounce',
+                  explain: 'After 3 consecutive red candles (panic selling overshoots), the first green candle signals smart money stepping in.',
+                  params: '3 reds → buy first green · TP +3% · SL -1.5%',
+                  result: '57.1% WR · +10.83% avg leveraged PnL · 70 trades',
+                  isHigh: false,
+                },
+                {
+                  icon: '📉', name: 'Short Post-Pump',
+                  accentColor: '#ff3366',
+                  tagline: 'Hype-fade reversal short',
+                  explain: 'After a token pumps >15% in 5 min, the hype dies and early buyers sell. We short the fade. High risk, best in bear markets.',
+                  params: 'Pump >15% → short · TP = 50% of pump · SL = new high',
+                  result: 'Best in bearish conditions',
+                  isHigh: false,
+                },
+                {
+                  icon: '⚡', name: 'Drift Scalper (SOL-PERP)',
+                  accentColor: '#a855f7',
+                  tagline: 'Leverage momentum — Drift Protocol',
+                  explain: 'Reads SOL perpetual funding rate + price momentum. Enters 10× leveraged longs/shorts when both signals align. Now LIVE.',
+                  params: '$2 collateral × 10x · TP +2% · SL -1% · Max 5min hold',
+                  result: '🔴 LIVE — $25 USDC allocated on Drift',
+                  isHigh: false,
+                },
+              ].map(({ icon, name, accentColor, tagline, explain, params, result }) => (
+                <div
+                  key={name}
+                  className="rounded-lg p-4"
+                  style={{
+                    background: '#111318',
+                    border: `1px solid #2a2d35`,
+                    borderLeft: `3px solid ${accentColor}`,
+                  }}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="text-xl mt-0.5">{icon}</span>
+                    <div>
+                      <div className="font-semibold text-sm mb-0.5" style={{ color: '#e2e8f0' }}>{name}</div>
+                      <div className="text-[10px] font-mono italic mb-2" style={{ color: '#64748b' }}>{tagline}</div>
+                      <p className="text-xs leading-relaxed mb-2" style={{ color: '#94a3b8' }}>{explain}</p>
+                      <p className="font-mono text-[11px] mb-1" style={{ color: '#64748b' }}>{params}</p>
+                      <p className="text-[11px] font-mono" style={{ color: accentColor }}>{result}</p>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* CONTROL TAB */}
-      {tab === 'control' && (
-        <div className="space-y-5">
-          {/* Quick Commands */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <h3 className="text-white font-semibold mb-1">Quick Commands</h3>
-            <p className="text-gray-500 text-xs mb-4">One-click — instantly queued to GEOFF via harness</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {QUICK_COMMANDS.map(qc => (
-                <button
-                  key={qc.label}
-                  onClick={async () => {
-                    const { error } = await lifeos.from('harness_tasks').insert({
-                      task_id: `GEOFF-CMD-${Date.now()}`,
-                      title: qc.cmd,
-                      description: `Quick command from Mission Control`,
-                      owner_agent: 'geoff',
-                      routed_to: 'geoff',
-                      status: 'pending',
-                      priority: 'high',
-                      source: 'mission_control',
-                    })
-                    setCmdLog(prev => [{ ts: new Date().toLocaleTimeString(), cmd: qc.cmd, ok: !error }, ...prev.slice(0, 9)])
-                  }}
-                  className="p-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-emerald-500/40 rounded-xl text-left transition-all group"
-                >
-                  <div className="text-white text-xs font-medium group-hover:text-emerald-400 transition-colors">{qc.label}</div>
-                  <div className="text-gray-600 text-xs mt-1 truncate">{qc.cmd.replace('GEOFF: ', '')}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Command Input */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Terminal className="w-4 h-4 text-emerald-400" />
-              <h3 className="text-white font-semibold">Command GEOFF</h3>
-            </div>
-            <p className="text-gray-500 text-xs mb-4">
-              Commands are written to harness_tasks and picked up by GEOFF on his next cycle.
-            </p>
-            <div className="flex gap-2">
-              <textarea
-                id="geoff-command-input"
-                name="geoff-command"
-                value={command}
-                onChange={e => setCommand(e.target.value)}
-                placeholder="e.g. GEOFF: analyze SOL/USD technical setup and give entry recommendation"
-                rows={3}
-                autoComplete="off"
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-emerald-500 resize-none"
-                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendCommand() }}
-              />
-            </div>
-            <div className="flex items-center justify-between mt-3">
-              <span className="text-gray-600 text-xs">Cmd+Enter to send · Commands routed to geoff agent</span>
-              <button
-                onClick={sendCommand}
-                disabled={!command.trim() || cmdSending}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-sm font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Send className="w-4 h-4" />
-                {cmdSending ? 'Sending...' : 'Send Command'}
-              </button>
-            </div>
-          </div>
-
-          {/* Command Log */}
-          {cmdLog.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-800">
-                <h3 className="text-white font-semibold text-sm">Command Log</h3>
+            {/* Score tiers */}
+            <div className="rounded-lg p-4" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+              <div className="flex items-center gap-2 mb-4">
+                <BookOpen className="w-4 h-4" style={{ color: '#f59e0b' }} />
+                <span className="text-xs font-mono font-semibold" style={{ color: '#e2e8f0' }}>Signal Score Tiers</span>
               </div>
-              <div className="divide-y divide-gray-800">
-                {cmdLog.map((entry, i) => (
-                  <div key={i} className="px-5 py-3 flex items-start gap-3">
-                    {entry.ok
-                      ? <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-                      : <XCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-gray-300 text-xs">{entry.cmd}</div>
-                      <div className="text-gray-600 text-xs mt-0.5">{entry.ts}</div>
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded ${entry.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {entry.ok ? 'queued' : 'failed'}
-                    </span>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { range: '55–64', label: 'WATCH', desc: 'Paper only', accent: '#64748b' },
+                  { range: '65–74', label: 'MODERATE', desc: 'Small paper trade', accent: '#60a5fa' },
+                  { range: '75–84', label: 'HIGH', desc: 'Active paper', accent: '#f59e0b' },
+                  { range: '85+', label: 'MAX', desc: 'Live candidate', accent: '#22ff88' },
+                ].map(({ range, label, desc, accent }) => (
+                  <div
+                    key={range}
+                    className="rounded-lg p-3"
+                    style={{ background: '#1a1d24', border: `1px solid #2a2d35`, borderTop: `2px solid ${accent}` }}
+                  >
+                    <p className="font-mono text-lg font-bold" style={{ color: accent }}>{range}</p>
+                    <p className="font-mono font-semibold text-[11px] mt-0.5" style={{ color: '#e2e8f0' }}>{label}</p>
+                    <p className="text-[10px] font-mono" style={{ color: '#64748b' }}>{desc}</p>
                   </div>
                 ))}
               </div>
             </div>
-          )}
-
-          {/* Warning */}
-          <div className="flex items-start gap-3 p-4 bg-yellow-500/5 border border-yellow-500/20 rounded-xl">
-            <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
-            <p className="text-yellow-400/80 text-xs">
-              Commands are queued in harness_tasks with owner_agent=geoff. GEOFF will process them on his next active cycle. High priority commands are processed first.
-            </p>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* CONTROL TAB */}
+        {tab === 'control' && (
+          <div className="space-y-4">
+            {/* Quick Commands */}
+            <div className="rounded-lg p-4" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+              <div className="text-xs font-mono font-semibold mb-0.5" style={{ color: '#e2e8f0' }}>Quick Commands</div>
+              <div className="text-[10px] font-mono mb-4" style={{ color: '#64748b' }}>One-click — instantly queued to GEOFF via harness</div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {QUICK_COMMANDS.map(qc => (
+                  <button
+                    key={qc.label}
+                    onClick={async () => {
+                      const { error: qErr } = await lifeos.from('harness_tasks').insert({
+                        task_id: `GEOFF-CMD-${Date.now()}`,
+                        title: qc.cmd,
+                        description: `Quick command from Mission Control`,
+                        owner_agent: 'geoff',
+                        routed_to: 'geoff',
+                        status: 'pending',
+                        priority: 'high',
+                        source: 'mission_control',
+                      })
+                      setCmdLog(prev => [{ ts: new Date().toLocaleTimeString(), cmd: qc.cmd, ok: !qErr }, ...prev.slice(0, 9)])
+                    }}
+                    className="p-3 text-left rounded-lg transition-all group"
+                    style={{ background: '#1a1d24', border: '1px solid #2a2d35' }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.borderColor = 'rgba(34,255,136,0.3)'
+                      e.currentTarget.style.background = '#1f2330'
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.borderColor = '#2a2d35'
+                      e.currentTarget.style.background = '#1a1d24'
+                    }}
+                  >
+                    <div className="font-mono font-medium text-xs" style={{ color: '#e2e8f0' }}>{qc.label}</div>
+                    <div className="font-mono text-[10px] mt-1 truncate" style={{ color: '#64748b' }}>{qc.cmd.replace('GEOFF: ', '')}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Terminal Command Input */}
+            <div className="rounded-lg p-4" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+              <div className="flex items-center gap-2 mb-3">
+                <Terminal className="w-4 h-4" style={{ color: '#22ff88' }} />
+                <span className="font-mono font-semibold text-xs" style={{ color: '#e2e8f0' }}>Command GEOFF</span>
+              </div>
+              <p className="text-[10px] font-mono mb-4" style={{ color: '#64748b' }}>
+                Commands are written to harness_tasks and picked up by GEOFF on his next cycle.
+              </p>
+              {/* Terminal prompt style */}
+              <div
+                className="rounded-lg p-3 mb-3"
+                style={{ background: '#0a0b0d', border: '1px solid #2a2d35' }}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="font-mono font-bold text-sm mt-2.5" style={{ color: '#22ff88' }}>{'>'}</span>
+                  <textarea
+                    id="geoff-command-input"
+                    name="geoff-command"
+                    value={command}
+                    onChange={e => setCommand(e.target.value)}
+                    placeholder="e.g. GEOFF: analyze SOL/USD technical setup and give entry recommendation"
+                    rows={3}
+                    autoComplete="off"
+                    className="flex-1 bg-transparent resize-none focus:outline-none font-mono text-sm placeholder-gray-700"
+                    style={{ color: '#e2e8f0' }}
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendCommand() }}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono" style={{ color: '#64748b' }}>Cmd+Enter to send · Routed to geoff agent</span>
+                <button
+                  onClick={sendCommand}
+                  disabled={!command.trim() || cmdSending}
+                  className="flex items-center gap-2 px-4 py-2 rounded text-xs font-mono font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'rgba(34,255,136,0.08)',
+                    border: '1px solid rgba(34,255,136,0.25)',
+                    color: '#22ff88',
+                  }}
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {cmdSending ? 'Sending...' : 'Send'}
+                </button>
+              </div>
+            </div>
+
+            {/* Command Log */}
+            {cmdLog.length > 0 && (
+              <div className="rounded-lg overflow-hidden" style={{ background: '#111318', border: '1px solid #2a2d35' }}>
+                <div className="px-4 py-2.5 border-b" style={{ borderColor: '#2a2d35' }}>
+                  <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: '#64748b' }}>Command Log</span>
+                </div>
+                <div style={{ background: '#0a0b0d' }}>
+                  {cmdLog.map((entry, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-3 px-4 py-2.5"
+                      style={{ borderBottom: '1px solid rgba(42,45,53,0.5)' }}
+                    >
+                      {entry.ok
+                        ? <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#22ff88' }} />
+                        : <XCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#ff3366' }} />}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-mono text-xs" style={{ color: '#94a3b8' }}>{entry.cmd}</div>
+                        <div className="font-mono text-[10px] mt-0.5" style={{ color: '#64748b' }}>{entry.ts}</div>
+                      </div>
+                      <span
+                        className="font-mono text-[10px] font-bold uppercase"
+                        style={{ color: entry.ok ? '#22ff88' : '#ff3366' }}
+                      >
+                        {entry.ok ? 'queued' : 'failed'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Warning */}
+            <div
+              className="flex items-start gap-3 p-3 rounded-lg"
+              style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.15)' }}
+            >
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#f59e0b' }} />
+              <p className="text-[11px] font-mono leading-relaxed" style={{ color: 'rgba(245,158,11,0.7)' }}>
+                Commands are queued in harness_tasks with owner_agent=geoff. GEOFF will process them on his next active cycle. High priority commands are processed first.
+              </p>
+            </div>
+          </div>
+        )}
+
+      </div>
     </div>
   )
 }
 
-function SignalRow({
-  sig, onAction, actioning, compact = false
+// ── Axiom-style Signal Row ────────────────────────────────────────────────────
+
+function AxiomSignalRow({
+  sig,
+  rank,
+  onAction,
+  actioning,
+  compact = false,
 }: {
   sig: XenaAlphaSignal
+  rank: number
   onAction: (sig: XenaAlphaSignal, action: 'APPROVED' | 'REJECTED' | 'WATCHING') => void
   actioning: boolean
   compact?: boolean
 }) {
+  if (compact) {
+    // Compact overview mode: full card with info
+    return (
+      <div
+        className="flex items-center gap-3 px-4 py-2.5 transition-colors"
+        style={{ borderBottom: '1px solid rgba(42,45,53,0.5)' }}
+        onMouseEnter={e => (e.currentTarget.style.background = '#1a1d24')}
+        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+      >
+        <span className="font-mono text-[10px] w-5 text-right flex-shrink-0" style={{ color: '#64748b' }}>{rank}</span>
+        <span className="font-mono font-bold text-xs w-20 flex-shrink-0" style={{ color: '#e2e8f0' }}>{sig.token_symbol}</span>
+        {sig.score != null && (
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold border flex-shrink-0 ${scoreColor(sig.score)}`}
+          >
+            {sig.score.toFixed(0)}
+          </span>
+        )}
+        <span
+          className={`px-1.5 py-0.5 rounded text-[10px] font-mono border flex-shrink-0 ${strengthColor(sig.signal_strength)}`}
+        >
+          {sig.signal_strength}
+        </span>
+        {sig.signal_type && (
+          <span className="font-mono text-[10px] flex-shrink-0" style={{ color: '#94a3b8' }}>{sig.signal_type}</span>
+        )}
+        {sig.on_chain_confirmed && (
+          <span className="text-[10px] font-mono flex-shrink-0" style={{ color: '#22ff88' }}>⛓ on-chain</span>
+        )}
+        <span className="font-mono text-[10px] ml-auto flex-shrink-0" style={{ color: '#64748b' }}>
+          {fmtTime(sig.created_at)}
+        </span>
+        {sig.token_mint && (
+          <a
+            href={`https://birdeye.so/token/${sig.token_mint}?chain=solana`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-shrink-0"
+            onClick={e => e.stopPropagation()}
+          >
+            <ExternalLink className="w-3 h-3" style={{ color: '#60a5fa' }} />
+          </a>
+        )}
+        {sig.geoff_action && (
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border flex-shrink-0 ${actionColor(sig.geoff_action)}`}>
+            {sig.geoff_action}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  // Full signals tab row
   return (
-    <div className={`bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors ${compact ? 'border-0 rounded-none border-b' : ''}`}>
-      <div className="flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-white font-bold text-sm">{sig.token_symbol}</span>
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${signalBadge(sig.signal_strength)}`}>
-              {sig.signal_strength}
-            </span>
-            {sig.geoff_action && (
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${actionBadge(sig.geoff_action)}`}>
-                {sig.geoff_action}
-              </span>
-            )}
-            {sig.score != null && (
-              <span className="text-yellow-400 text-xs font-medium">Score: {sig.score.toFixed(1)}</span>
-            )}
-            <span className="text-gray-600 text-xs ml-auto">{fmtDate(sig.created_at)}</span>
-          </div>
-          {!compact && sig.post_content && (
-            <p className="text-gray-500 text-xs mt-1.5 line-clamp-2 leading-relaxed">{sig.post_content}</p>
+    <div
+      className="transition-colors"
+      style={{ borderBottom: '1px solid rgba(42,45,53,0.5)', height: '40px' }}
+      onMouseEnter={e => (e.currentTarget.style.background = '#1a1d24')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+    >
+      <div
+        className="grid items-center gap-0 px-3 h-full"
+        style={{ gridTemplateColumns: '28px 80px 52px 90px 70px 60px 1fr 160px' }}
+      >
+        {/* Rank */}
+        <span className="font-mono text-[10px]" style={{ color: '#64748b' }}>{rank}</span>
+
+        {/* Token */}
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono font-bold text-xs" style={{ color: '#e2e8f0' }}>{sig.token_symbol}</span>
+          {sig.token_mint && (
+            <a
+              href={`https://birdeye.so/token/${sig.token_mint}?chain=solana`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+            >
+              <ExternalLink className="w-2.5 h-2.5" style={{ color: '#60a5fa' }} />
+            </a>
           )}
-          <div className="flex items-center gap-3 mt-1.5">
-            {sig.source_account && <span className="text-gray-600 text-xs">{sig.source_account}</span>}
-            {sig.caller_win_rate != null && (
-              <span className="text-gray-500 text-xs">WR: {(sig.caller_win_rate * 100).toFixed(0)}%</span>
-            )}
-            {sig.on_chain_confirmed && (
-              <span className="text-emerald-500 text-xs">On-chain ✓</span>
-            )}
-            {sig.token_mint && (
-              <a
-                href={`https://birdeye.so/token/${sig.token_mint}?chain=solana`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-400 text-xs flex items-center gap-1 hover:underline"
-                onClick={e => e.stopPropagation()}
-              >
-                Chart <ExternalLink className="w-3 h-3" />
-              </a>
-            )}
-          </div>
         </div>
 
-        {/* Action Buttons */}
-        {!sig.geoff_reviewed && (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button
-              onClick={() => onAction(sig, 'APPROVED')}
-              disabled={actioning}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-40"
-            >
-              <CheckCircle className="w-3.5 h-3.5" /> Approve
-            </button>
-            <button
-              onClick={() => onAction(sig, 'WATCHING')}
-              disabled={actioning}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded-lg text-xs font-medium hover:bg-yellow-500/20 transition-colors disabled:opacity-40"
-            >
-              Watch
-            </button>
-            <button
-              onClick={() => onAction(sig, 'REJECTED')}
-              disabled={actioning}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-colors disabled:opacity-40"
-            >
-              <XCircle className="w-3.5 h-3.5" /> Pass
-            </button>
-          </div>
+        {/* Score chip */}
+        {sig.score != null ? (
+          <span
+            className={`inline-flex items-center justify-center w-10 h-5 rounded-full text-[10px] font-mono font-bold border ${scoreColor(sig.score)}`}
+          >
+            {sig.score.toFixed(0)}
+          </span>
+        ) : (
+          <span className="font-mono text-[10px]" style={{ color: '#64748b' }}>—</span>
         )}
+
+        {/* Signal type */}
+        <span className="font-mono text-[10px] truncate" style={{ color: '#94a3b8' }}>
+          {sig.signal_type || '—'}
+        </span>
+
+        {/* Strength */}
+        <span
+          className={`inline-flex items-center px-1.5 h-5 rounded text-[10px] font-mono border w-fit ${strengthColor(sig.signal_strength)}`}
+        >
+          {sig.signal_strength || '—'}
+        </span>
+
+        {/* On-chain */}
+        <span className="font-mono text-[10px]" style={{ color: sig.on_chain_confirmed ? '#22ff88' : '#2a2d35' }}>
+          {sig.on_chain_confirmed ? '⛓ yes' : '—'}
+        </span>
+
+        {/* Time */}
+        <span className="font-mono text-[10px]" style={{ color: '#64748b' }}>
+          {fmtTime(sig.created_at)}
+        </span>
+
+        {/* Action buttons */}
+        <div className="flex items-center justify-end gap-1">
+          {sig.geoff_reviewed ? (
+            <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${actionColor(sig.geoff_action)}`}>
+              {sig.geoff_action || 'reviewed'}
+            </span>
+          ) : (
+            <>
+              <button
+                onClick={() => onAction(sig, 'APPROVED')}
+                disabled={actioning}
+                className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase transition-all disabled:opacity-40"
+                style={{ background: 'rgba(34,255,136,0.08)', border: '1px solid rgba(34,255,136,0.25)', color: '#22ff88' }}
+              >
+                APPROVE
+              </button>
+              <button
+                onClick={() => onAction(sig, 'WATCHING')}
+                disabled={actioning}
+                className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase transition-all disabled:opacity-40"
+                style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#f59e0b' }}
+              >
+                WATCH
+              </button>
+              <button
+                onClick={() => onAction(sig, 'REJECTED')}
+                disabled={actioning}
+                className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase transition-all disabled:opacity-40"
+                style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)', color: '#64748b' }}
+              >
+                PASS
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
