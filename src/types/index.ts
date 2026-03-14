@@ -115,6 +115,8 @@ export interface Estimate {
   client_viewed_at: string | null
   client_response: string | null
   client_token: string | null
+  drive_folder_url: string | null
+  converted_from_quote_id: string | null
 }
 
 export interface Lead {
