@@ -471,7 +471,7 @@ export function GeoffTrading() {
                     width={140} tickLine={false} />
                   <Tooltip
                     contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
-                    formatter={(v: number, name: string) => [name === 'winRate' ? `${v}%` : v, name === 'winRate' ? 'Win Rate' : 'Trades'] as [string | number, string]}
+                    formatter={(v: unknown) => [`${v}%`, 'Win Rate']}
                   />
                   <ReferenceLine x={50} stroke="#374151" strokeDasharray="4 4" />
                   <Bar dataKey="winRate" radius={[0, 4, 4, 0]}
