@@ -328,8 +328,7 @@ export function XenaSignals() {
 
   function resizeCanvas(w: number, h: number) {
     if (!fabricRef.current) return
-    fabricRef.current.setWidth(w)
-    fabricRef.current.setHeight(h)
+    fabricRef.current.setDimensions({ width: w, height: h })
     fabricRef.current.renderAll()
   }
 
