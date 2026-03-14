@@ -298,7 +298,7 @@ export function GeoffChart() {
   const fibLinesRef = useRef<IPriceLine[]>([])
   const wsRef = useRef<BinanceWebSocket | null>(null)
   const massiveRef = useRef<MassiveREST | null>(null)
-  const binanceRestRef = useRef<BinanceREST | null>(null)
+  const binanceRestRef = useRef<BinanceREST>(new BinanceREST())
 
   // Track current symbol for WS callbacks (avoid stale closure)
   const symbolRef = useRef(symbol)
@@ -536,7 +536,6 @@ export function GeoffChart() {
   // ─── Load historical data ────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
-    if (!binanceRestRef.current) return
     setLoading(true)
     setError(null)
     setDataNote(null)
@@ -593,11 +592,6 @@ export function GeoffChart() {
   }, [symbol, timeframe, loadData])
 
   // ─── WebSocket integration ────────────────────────────────────────────────
-
-  // Initialize Binance REST immediately (no auth needed)
-  useEffect(() => {
-    binanceRestRef.current = new BinanceREST()
-  }, [])
 
   // Initialize Massive REST when API key provided (for indicators only)
   useEffect(() => {
@@ -1005,7 +999,7 @@ export function GeoffChart() {
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
