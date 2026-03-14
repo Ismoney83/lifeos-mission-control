@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart,
-  BarChart, Bar, Cell, PieChart, Pie, LineChart, Line, CartesianGrid
+  BarChart, Bar, Cell, PieChart, Pie, CartesianGrid
 } from 'recharts'
 
 type Tab = 'chart' | 'overview' | 'positions' | 'signals' | 'history' | 'strategies' | 'control'
@@ -471,11 +471,11 @@ export function GeoffTrading() {
                     width={140} tickLine={false} />
                   <Tooltip
                     contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
-                    formatter={(v: number, name) => [name === 'winRate' ? `${v}%` : v, name === 'winRate' ? 'Win Rate' : 'Trades']}
+                    formatter={(v: number, name: string) => [name === 'winRate' ? `${v}%` : v, name === 'winRate' ? 'Win Rate' : 'Trades'] as [string | number, string]}
                   />
                   <ReferenceLine x={50} stroke="#374151" strokeDasharray="4 4" />
                   <Bar dataKey="winRate" radius={[0, 4, 4, 0]}
-                    label={{ position: 'right', fill: '#9ca3af', fontSize: 10, formatter: (v: number) => `${v}%` }}>
+                    label={{ position: 'right', fill: '#9ca3af', fontSize: 10, formatter: (v: unknown) => `${v}%` }}>
                     {backtest.map((b, i) => (
                       <Cell key={i} fill={b.win_rate >= 60 ? '#10b981' : b.win_rate >= 50 ? '#3b82f6' : '#ef4444'} />
                     ))}
