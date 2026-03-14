@@ -44,17 +44,6 @@ function platformCircle(p: string): string {
   return m[p?.toLowerCase()] || 'bg-gray-600 ring-gray-400'
 }
 
-function platformColor(p: string) {
-  const m: Record<string, string> = {
-    twitter: 'text-sky-400 bg-sky-500/10 border-sky-500/30',
-    instagram: 'text-pink-400 bg-pink-500/10 border-pink-500/30',
-    linkedin: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
-    youtube: 'text-red-400 bg-red-500/10 border-red-500/30',
-    tiktok: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
-    threads: 'text-gray-300 bg-gray-500/10 border-gray-500/30',
-  }
-  return m[p?.toLowerCase()] || 'text-gray-400 bg-gray-500/10 border-gray-500/30'
-}
 
 function postStatusBadge(s: string): string {
   switch (s?.toLowerCase()) {

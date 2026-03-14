@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { lifeos, ovb } from '../lib/supabase'
 import { AGENTS } from '../types'
 import type { HarnessTask, XenaAlphaSignal, Estimate } from '../types'
-import { CheckSquare, TrendingUp, DollarSign, Zap, Clock, Wrench, Target, BarChart2 } from 'lucide-react'
+import { CheckSquare, DollarSign, Zap, Clock, Wrench, Target, BarChart2 } from 'lucide-react'
 
 function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr)
